@@ -9,8 +9,15 @@ const notesIdx = rest.indexOf('--notes-file');
 const notesFile = notesIdx > -1 ? rest[notesIdx + 1] : null;
 
 const die = (msg) => { console.error(`release: ${msg}`); process.exit(1); };
-// Only npm needs a shell on Windows (it's npm.cmd); a shell would split args like "Release v1.0.0".
-const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: 'inherit', shell: process.platform === 'win32' && cmd === 'npm', ...opts });
+// No shells anywhere (they split args like "Release v1.0.0" and trigger DEP0190). npm is a
+// .cmd on Windows, so run its JS entry (npm_execpath, set by `npm run`) with node directly.
+const run = (cmd, args, opts = {}) => {
+  if (cmd === 'npm') {
+    if (!process.env.npm_execpath) die('run this via `npm run release`');
+    [cmd, args] = [process.execPath, [process.env.npm_execpath, ...args]];
+  }
+  execFileSync(cmd, args, { stdio: 'inherit', ...opts });
+};
 const out = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8' }).trim();
 
 if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) die('give a version like 0.3.0');
