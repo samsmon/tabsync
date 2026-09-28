@@ -8,6 +8,7 @@ const now = () => (last = Math.max(Date.now(), last + 1));
 
 const rec = (id, data) => ({ id, ts: now(), dirty: true, deleted: false, data });
 const tomb = (id) => ({ id, ts: now(), dirty: true, deleted: true, data: null });
+const live = (r) => !r.deleted;
 
 function changed() {
   chrome.runtime.sendMessage({ type: 'changed', local: true }).catch(() => {});
@@ -24,8 +25,14 @@ const newMeta = (createdAt = Date.now()) => ({ title: '', createdAt, locked: fal
 
 // URLs already in the list are dropped silently, so the stored copy (and its title) wins.
 export async function createGroup(tabs) {
-  const seen = new Set((await db.all()).filter((r) => !r.deleted && r.id.startsWith('t:')).map((r) => r.data.url));
-  tabs = tabs.filter((t) => !seen.has(t.url) && seen.add(t.url));
+  const seen = new Set();
+  const fresh = [];
+  for (const t of tabs) {
+    if (seen.has(t.url)) continue;
+    seen.add(t.url);
+    if (!(await db.byIndex('url', t.url)).some(live)) fresh.push(t);
+  }
+  tabs = fresh;
   if (!tabs.length) return null;
   const gid = `g:${crypto.randomUUID()}`;
   await db.putMany(groupRecords(gid, newMeta(), tabs));
@@ -49,19 +56,51 @@ export async function updateGroup(gid, patch) {
   changed();
 }
 
+const tabsOf = async (gid) => (await db.byIndex('groupId', gid)).filter(live);
+const byPos = (a, b) => a.data.pos - b.data.pos || (a.id < b.id ? -1 : 1);
+
+// removeTab/deleteGroup return a snapshot of what they tombstoned; pass it to undo().
 export async function removeTab(tabId) {
   const t = await db.get(tabId);
-  if (!t || t.deleted) return;
-  const out = [tomb(tabId)];
-  const siblings = (await db.all()).filter((r) => !r.deleted && r.id !== tabId && r.data?.groupId === t.data.groupId);
-  if (!siblings.length) out.push(tomb(t.data.groupId));
-  await db.putMany(out);
+  if (!t || t.deleted) return [];
+  const before = [t];
+  if (!(await tabsOf(t.data.groupId)).some((r) => r.id !== tabId)) before.push(await db.get(t.data.groupId));
+  await db.putMany(before.filter(Boolean).map((r) => tomb(r.id)));
   changed();
+  return before.filter(Boolean);
 }
 
 export async function deleteGroup(gid) {
-  const tabs = (await db.all()).filter((r) => !r.deleted && r.data?.groupId === gid);
-  await db.putMany([tomb(gid), ...tabs.map((t) => tomb(t.id))]);
+  const g = await db.get(gid);
+  if (!g || g.deleted) return [];
+  const before = [g, ...(await tabsOf(gid))];
+  await db.putMany(before.map((r) => tomb(r.id)));
+  changed();
+  return before;
+}
+
+// Resurrects a snapshot with fresh timestamps so the undo also wins on other devices.
+export async function undo(snapshot) {
+  if (!snapshot?.length) return;
+  await db.putMany(snapshot.map((r) => rec(r.id, r.data)));
+  changed();
+}
+
+// Moves a tab into group `gid`, before tab `beforeId` (or to the end). Positions are
+// fractional, so only the moved tab's record changes.
+export async function moveTab(tabId, gid, beforeId = null) {
+  const t = await db.get(tabId);
+  if (!t || t.deleted || tabId === beforeId) return;
+  const siblings = (await tabsOf(gid)).filter((r) => r.id !== tabId).sort(byPos);
+  let i = siblings.findIndex((r) => r.id === beforeId);
+  if (i < 0) i = siblings.length;
+  const prev = siblings[i - 1]?.data.pos;
+  const next = siblings[i]?.data.pos;
+  const pos = prev == null ? (next == null ? 0 : next - 1) : next == null ? prev + 1 : (prev + next) / 2;
+  const out = [rec(tabId, { ...t.data, groupId: gid, pos })];
+  const from = t.data.groupId;
+  if (from !== gid && !(await tabsOf(from)).some((r) => r.id !== tabId)) out.push(tomb(from));
+  await db.putMany(out);
   changed();
 }
 

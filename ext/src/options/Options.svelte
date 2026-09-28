@@ -2,6 +2,9 @@
   import { onMount } from 'svelte';
   import { setup } from '../lib/sync.js';
 
+  // Inside the list page's modal, import/export open in place instead of navigating.
+  let { onio } = $props();
+
   let server = $state('');
   let token = $state('');
   let passphrase = $state('');
@@ -44,12 +47,16 @@
   {#if msg}<p>{msg}</p>{/if}
   <h2>Import / Export</h2>
   <p class="hint">OneTab-compatible (<code>url | title</code>, blank line between groups).</p>
-  <p><a href="list.html#import">Import URLs</a> · <a href="list.html#export">Export URLs</a></p>
+  {#if onio}
+    <p><button type="button" onclick={() => onio('import')}>Import URLs</button> <button type="button" onclick={() => onio('export')}>Export URLs</button></p>
+  {:else}
+    <p><a href="list.html#import">Import URLs</a> · <a href="list.html#export">Export URLs</a></p>
+  {/if}
 </form>
 
 <style>
   :global(body) { font: 14px/1.4 system-ui, sans-serif; background: Canvas; color: CanvasText; }
-  form { max-width: 420px; margin: 40px auto; padding: 0 16px; display: grid; gap: 12px; }
+  form { max-width: 420px; margin: 24px auto; padding: 0 16px; display: grid; gap: 12px; }
   label { display: grid; gap: 4px; }
   input { padding: 6px 8px; font: inherit; }
   .hint { color: GrayText; font-size: 12px; margin: 0; }

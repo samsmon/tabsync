@@ -71,6 +71,31 @@ const g3 = await G.createGroup([{ url: 'https://q', title: 'dup' }, { url: 'http
 assert.deepEqual((await G.listGroups()).find((g) => g.id === g3).data.tabs.map((t) => t.title), ['R']);
 assert.ok((await G.listGroups()).some((g) => g.data.tabs.some((t) => t.title === 'Q (edited remotely)')));
 
+// undo brings back a removed last tab together with its group
+const g4 = await G.createGroup([{ url: 'https://u', title: 'U' }]);
+const [u] = (await G.listGroups()).find((g) => g.id === g4).data.tabs;
+const snap = await G.removeTab(u.id);
+assert.ok((await db.get(g4)).deleted);
+await G.undo(snap);
+assert.deepEqual((await G.listGroups()).find((g) => g.id === g4).data.tabs.map((t) => t.url), ['https://u']);
+assert.ok((await db.get(g4)).dirty, 'undo is pushed like any edit');
+
+// undo a whole-group delete
+await G.undo(await G.deleteGroup(g4));
+assert.ok((await G.listGroups()).some((g) => g.id === g4));
+
+// move: reorder within a group, then move across groups (emptied source group disappears)
+const m = await G.createGroup([{ url: 'https://m1', title: 'm1' }, { url: 'https://m2', title: 'm2' }, { url: 'https://m3', title: 'm3' }]);
+const mt = () => G.listGroups().then((gs) => gs.find((g) => g.id === m)?.data.tabs.map((t) => t.title));
+const [m1, , m3] = (await G.listGroups()).find((g) => g.id === m).data.tabs;
+await G.moveTab(m3.id, m, m1.id);
+assert.deepEqual(await mt(), ['m3', 'm1', 'm2']);
+await G.moveTab(m3.id, m); // to the end
+assert.deepEqual(await mt(), ['m1', 'm2', 'm3']);
+await G.moveTab(u.id, m, m1.id);
+assert.deepEqual(await mt(), ['U', 'm1', 'm2', 'm3']);
+assert.ok((await db.get(g4)).deleted, 'emptied group is tombstoned');
+
 // import keeps order and ids are per-tab
 await G.importGroups([[{ url: 'https://1', title: '1' }], [{ url: 'https://2', title: '2' }]]);
 const titles = (await G.listGroups()).map((g) => g.data.tabs[0].title).filter((t) => t === '1' || t === '2');

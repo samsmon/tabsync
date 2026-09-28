@@ -39,9 +39,20 @@ export async function setup(server, token, passphrase) {
   return sync();
 }
 
+// The outcome of the last sync (from any page or the background worker) lands in
+// chrome.storage.local.syncStatus as { at, ok, error? }, so the list page can show it.
 let running = null;
 export function sync() {
-  running ??= doSync().finally(() => (running = null));
+  running ??= doSync()
+    .then(async (r) => {
+      if (!r.skipped) await chrome.storage.local.set({ syncStatus: { at: Date.now(), ok: true } });
+      return r;
+    })
+    .catch(async (e) => {
+      await chrome.storage.local.set({ syncStatus: { at: Date.now(), ok: false, error: e.message } });
+      throw e;
+    })
+    .finally(() => (running = null));
   return running;
 }
 
