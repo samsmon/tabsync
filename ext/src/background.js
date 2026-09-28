@@ -1,6 +1,6 @@
 // MV3 service worker: wakes on events, does its job, gets killed by Chrome. Zero idle RAM.
 import { createGroup, addToArchive } from './lib/groups.js';
-import { deviceName } from './lib/device.js';
+import { deviceMeta } from './lib/device.js';
 import { sync } from './lib/sync.js';
 import { checkForUpdate } from './lib/updater.js';
 
@@ -15,7 +15,7 @@ async function sendTabs(tabs, meta = {}) {
   tabs = tabs.filter(keep);
   if (!tabs.length) return openList();
   // duplicates are dropped from the list but their tabs still close
-  await createGroup(tabs.map((t) => ({ url: t.url, title: t.title || t.url })), { ...meta, device: await deviceName() });
+  await createGroup(tabs.map((t) => ({ url: t.url, title: t.title || t.url })), { ...meta, ...(await deviceMeta()) });
   await openList();
   await chrome.tabs.remove(tabs.map((t) => t.id));
   sync().catch(console.warn);

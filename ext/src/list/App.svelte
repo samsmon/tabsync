@@ -9,6 +9,7 @@
   import Icon from '../lib/Icon.svelte';
   import { getTheme, setTheme, THEMES } from '../lib/theme.js';
   import { installUpdate, getFolder, currentVersion } from '../lib/updater.js';
+  import { deviceId, deviceMeta } from '../lib/device.js';
 
   // Tabs/groups slide out when restored or removed and glide when reordered.
   // Off for the first render, so the initial list doesn't slide in card by card.
@@ -32,7 +33,33 @@
   });
   const total = $derived(groups.reduce((n, g) => n + g.data.tabs.length, 0));
   // The quick archive lives in the sidebar, not the main list.
-  const listed = $derived(filtered.filter((g) => g.id !== ARCHIVE));
+  // Device filter: 'this' (default), 'all', or another device's id. Groups saved before
+  // device ids existed have none and show under every filter.
+  let myId = $state('');
+  deviceId().then((id) => (myId = id));
+  let devFilter = $state((() => { try { return localStorage.getItem('deviceFilter') || 'this'; } catch { return 'this'; } })());
+  function setDevFilter(v) {
+    devFilter = v;
+    try { localStorage.setItem('deviceFilter', v); } catch {}
+  }
+  // [{ id, name, count }] for every device that has groups; its newest group's name wins
+  const devices = $derived.by(() => {
+    const m = new Map();
+    for (const g of groups) {
+      const id = g.data.deviceId;
+      if (!id || g.id === ARCHIVE) continue;
+      const d = m.get(id) ?? { id, name: g.data.device, count: 0, at: 0 };
+      d.count++;
+      if (g.data.createdAt > d.at) Object.assign(d, { name: g.data.device, at: g.data.createdAt });
+      m.set(id, d);
+    }
+    return [...m.values()].sort((a, b) => (b.id === myId) - (a.id === myId) || a.name.localeCompare(b.name));
+  });
+  // two profiles with the same detected name get a short id suffix
+  const devLabel = (d) => devices.some((o) => o !== d && o.name === d.name) ? `${d.name} (${d.id.slice(0, 4)})` : d.name;
+  const wantId = $derived(devFilter === 'this' ? myId : devFilter);
+  const listed = $derived(filtered.filter((g) => g.id !== ARCHIVE &&
+    (devFilter === 'all' || !g.data.deviceId || g.data.deviceId === wantId)));
   const archived = $derived(filtered.find((g) => g.id === ARCHIVE));
   const archiveCount = $derived(groups.find((g) => g.id === ARCHIVE)?.data.tabs.length ?? 0);
 
@@ -220,7 +247,7 @@
   async function doImport() {
     const parsed = parseOneTab(ioText);
     if (!parsed.length) { status = 'Nothing to import'; return; }
-    await importGroups(parsed);
+    await importGroups(parsed, await deviceMeta());
     status = `Imported ${parsed.reduce((n, g) => n + g.length, 0)} tabs in ${parsed.length} groups`;
     io = null;
     await reload();
@@ -447,6 +474,9 @@
       <div class="empty card">
         {#if q}
           <p class="muted">No groups match "{q}".</p>
+        {:else if devFilter !== 'all' && groups.some((g) => g.id !== ARCHIVE)}
+          <p><strong>No groups from {devFilter === 'this' ? 'this device' : 'that device'}</strong></p>
+          <p><button class="btn" onclick={() => setDevFilter('all')}>Show all devices</button></p>
         {:else}
           <p><strong>No saved tabs yet</strong></p>
           <p class="muted">Click the TabSync toolbar icon to send your open tabs here.</p>
@@ -456,6 +486,26 @@
     <div bind:this={sentinel}></div>
   </main>
 
+  <div class="side">
+  {#if devices.some((d) => d.id !== myId)}
+    <nav class="card devices" aria-label="Filter by device">
+      <div class="ahead"><h2>Devices</h2></div>
+      <button class="dev" class:on={devFilter === 'this'} onclick={() => setDevFilter('this')}>
+        <Icon name="monitor" size={14} /><span class="dname">This device</span>
+        <span class="pill">{devices.find((d) => d.id === myId)?.count ?? 0}</span>
+      </button>
+      <button class="dev" class:on={devFilter === 'all'} onclick={() => setDevFilter('all')}>
+        <Icon name="window" size={14} /><span class="dname">All devices</span>
+        <span class="pill">{groups.filter((g) => g.id !== ARCHIVE).length}</span>
+      </button>
+      {#each devices.filter((d) => d.id !== myId) as d (d.id)}
+        <button class="dev" class:on={devFilter === d.id} onclick={() => setDevFilter(d.id)} title={d.name}>
+          <span class="ddot"></span><span class="dname">{devLabel(d)}</span>
+          <span class="pill">{d.count}</span>
+        </button>
+      {/each}
+    </nav>
+  {/if}
   <aside class="card archive" class:drop-end={drop?.gid === ARCHIVE && drop.before === null}
     ondragover={(e) => dragOver(ARCHIVE, null, e)} ondrop={dropTab} aria-label="Quick archive">
     <div class="ahead">
@@ -481,6 +531,7 @@
       <p class="muted hint">{q ? 'No matches.' : 'Right-click any link and choose "Send link to Quick archive", or drag a tab here. Links stay here after you open them.'}</p>
     {/if}
   </aside>
+  </div>
   </div>
 </div>
 
@@ -534,7 +585,16 @@
   /* minmax(0, 1fr): without it a long nowrap title stretches the grid column past the window */
   /* list + quick archive sidebar; the sidebar moves above the list on narrow windows */
   .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
-  .archive { position: sticky; top: 80px; max-height: calc(100vh - 100px); overflow-y: auto; padding: 12px 8px 8px; }
+  .side { position: sticky; top: 80px; display: grid; gap: 14px; max-height: calc(100vh - 100px); grid-template-rows: auto minmax(0, 1fr); }
+  .archive { overflow-y: auto; padding: 12px 8px 8px; min-height: 0; }
+  .devices { padding: 12px 8px 8px; display: grid; gap: 2px; }
+  .dev { display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 8px; border: 0; border-radius: 7px;
+    background: none; color: var(--muted); font-size: 13px; text-align: left; cursor: pointer; }
+  .dev:hover { background: var(--surface-2); color: var(--text); }
+  .dev.on { background: var(--surface-2); color: var(--text); font-weight: 600; }
+  .dname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ddot { width: 14px; display: grid; place-items: center; }
+  .ddot::after { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .ahead { display: flex; align-items: center; gap: 8px; padding: 0 6px 8px; }
   .ahead h2 { font-size: 14px; margin: 0; }
   .archive li { height: auto; padding: 5px 4px; align-items: flex-start; }
@@ -548,7 +608,8 @@
   .device { display: inline-flex; align-items: center; gap: 4px; }
   @media (max-width: 1100px) {
     .layout { grid-template-columns: minmax(0, 1fr); }
-    .archive { position: static; max-height: 320px; order: -1; }
+    .side { position: static; max-height: none; order: -1; grid-template-rows: auto; }
+    .archive { max-height: 320px; }
   }
   main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }

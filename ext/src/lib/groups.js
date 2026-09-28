@@ -80,10 +80,10 @@ export async function addToArchive(tabs) {
 }
 
 // Bulk import keeps the source order: first group is treated as newest.
-export async function importGroups(tabLists) {
+export async function importGroups(tabLists, meta = {}) {
   const base = Date.now();
   await db.putMany(
-    tabLists.flatMap((tabs, i) => groupRecords(`g:${crypto.randomUUID()}`, newMeta(base - i), tabs)),
+    tabLists.flatMap((tabs, i) => groupRecords(`g:${crypto.randomUUID()}`, { ...newMeta(base - i), ...meta }, tabs)),
   );
   changed();
 }

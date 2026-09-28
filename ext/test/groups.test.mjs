@@ -116,6 +116,12 @@ assert.equal(cgData.title, 'Work');
 assert.deepEqual(cgData.chromeGroup, { color: 'blue' });
 assert.equal(cgData.device, 'Edge on Windows');
 
+// imports carry the importing device
+const before = new Set((await G.listGroups()).map((g) => g.id));
+await G.importGroups([[{ url: 'https://imp', title: 'imp' }]], { device: 'Chrome on macOS', deviceId: 'dev-2' });
+const imported = (await G.listGroups()).find((g) => !before.has(g.id));
+assert.equal(imported.data.deviceId, 'dev-2');
+
 // quick archive: fixed id, appends in order, skips URLs already archived (even if listed elsewhere it's still added)
 assert.equal(await G.addToArchive([{ url: 'https://arch1', title: 'a1' }, { url: 'https://cg', title: 'dup of a group tab' }]), 2);
 assert.equal(await G.addToArchive([{ url: 'https://arch1', title: 'again' }, { url: 'https://arch2', title: 'a2' }]), 1);

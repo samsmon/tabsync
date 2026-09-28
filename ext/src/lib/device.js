@@ -1,5 +1,6 @@
-// A readable name for this browser, stamped on groups it creates ("Edge on Windows").
-// Kept per device in chrome.storage.local (never synced), so it can be renamed in Settings.
+// Identifies this browser profile. chrome.storage.local is per profile, so two Chrome
+// profiles on the same PC get different ids even though their detected names match.
+// Groups store both: the id for filtering, the name for display. Never synced.
 const OS = { win: 'Windows', mac: 'macOS', linux: 'Linux', cros: 'ChromeOS', android: 'Android', openbsd: 'OpenBSD' };
 
 async function detect() {
@@ -7,6 +8,14 @@ async function detect() {
   const brand = brands.find((b) => !/chromium|not.?a.?brand/i.test(b))?.replace(/^(Microsoft|Google) /, '') ?? 'Chrome';
   const { os } = await chrome.runtime.getPlatformInfo();
   return `${brand} on ${OS[os] ?? os}`;
+}
+
+export async function deviceId() {
+  const { deviceId } = await chrome.storage.local.get('deviceId');
+  if (deviceId) return deviceId;
+  const id = crypto.randomUUID();
+  await chrome.storage.local.set({ deviceId: id });
+  return id;
 }
 
 export async function deviceName() {
@@ -20,3 +29,6 @@ export async function deviceName() {
 export async function setDeviceName(name) {
   await chrome.storage.local.set({ deviceName: name.trim() || (await detect()) });
 }
+
+// Fields stamped on every group saved here.
+export const deviceMeta = async () => ({ device: await deviceName(), deviceId: await deviceId() });
