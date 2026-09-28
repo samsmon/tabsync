@@ -1,9 +1,16 @@
 <script>
   import { onMount } from 'svelte';
-  import { listGroups, updateGroup, deleteGroup, importGroups, removeTab, undo, moveTab } from '../lib/groups.js';
+  import { slide, fly } from 'svelte/transition';
+  import { flip } from 'svelte/animate';
+  import { listGroups, updateGroup, deleteGroup, importGroups, removeTab, undo, moveTab, onChanged } from '../lib/groups.js';
   import { parseOneTab, toOneTab } from '../lib/onetab.js';
   import { sync } from '../lib/sync.js';
   import Options from '../options/Options.svelte';
+  import Icon from '../lib/Icon.svelte';
+  import { getTheme, setTheme, THEMES } from '../lib/theme.js';
+
+  // Tabs/groups slide out when restored or removed and glide when reordered.
+  const motion = { duration: matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180 };
 
   const PAGE = 30;
   let groups = $state([]);
@@ -92,13 +99,12 @@
     chrome.storage.onChanged.addListener(onStore);
     const tick = setInterval(() => (clock = Date.now()), 30_000);
     doSync();
-    const onMsg = (m) => m?.type === 'changed' && reload();
-    chrome.runtime.onMessage.addListener(onMsg);
+    const offChanged = onChanged(reload);
     // render groups progressively instead of all at once
     const io = new IntersectionObserver(([e]) => e.isIntersecting && (shown += PAGE));
     io.observe(sentinel);
     return () => {
-      chrome.runtime.onMessage.removeListener(onMsg);
+      offChanged();
       chrome.storage.onChanged.removeListener(onStore);
       clearInterval(tick);
       io.disconnect();
@@ -231,137 +237,249 @@
   }
 
   const favicon = (url) => `/_favicon/?pageUrl=${encodeURIComponent(url)}&size=16`;
-  const fmt = (ms) => new Date(ms).toLocaleString();
+  const fmt = (ms) => new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  const host = (url) => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; } };
+
+  let theme = $state(getTheme());
+  function cycleTheme() {
+    theme = THEMES[(THEMES.indexOf(theme) + 1) % THEMES.length];
+    setTheme(theme);
+  }
 </script>
 
 <svelte:window onkeydown={onKey} />
 
 <header>
-  <h1>TabSync <small>{total} tabs</small></h1>
-  <input type="search" placeholder="Search tabs…" bind:value={q} />
-  <button class="sync" class:bad={!syncing && syncInfo && !syncInfo.ok && !syncOff} title={syncTitle} onclick={doSync} disabled={syncing}>
-    <span class="dot"></span>{syncLabel}
-  </button>
-  <button onclick={toggleAll} disabled={!groups.length}>{allCollapsed ? 'Expand all' : 'Collapse all'}</button>
-  <button onclick={openImport}>Import</button>
-  <button onclick={openExport}>Export</button>
-  <button onclick={() => settings.showModal()}>Settings</button>
-  {#if status}<span class="status">{status}</span>{/if}
+  <div class="bar">
+    <div class="brand">
+      <h1>TabSync</h1>
+      <span class="count">{total} tabs</span>
+    </div>
+    <label class="search">
+      <Icon name="search" size={15} />
+      <input type="search" placeholder="Search tabs" bind:value={q} />
+    </label>
+    <div class="actions">
+      <button class="btn ghost sync" class:bad={!syncing && syncInfo && !syncInfo.ok && !syncOff} class:off={syncOff}
+        class:busy={syncing} title={syncTitle} onclick={doSync} disabled={syncing}>
+        <span class="dot"></span>{syncLabel}
+      </button>
+      <button class="icon-btn" title={allCollapsed ? 'Expand all' : 'Collapse all'} onclick={toggleAll} disabled={!groups.length}>
+        <Icon name={allCollapsed ? 'expand' : 'collapse'} />
+      </button>
+      <button class="icon-btn" title="Import" onclick={openImport}><Icon name="upload" /></button>
+      <button class="icon-btn" title="Export" onclick={openExport}><Icon name="download" /></button>
+      <button class="icon-btn" title={`Theme: ${theme}`} onclick={cycleTheme}>
+        <Icon name={theme === 'light' ? 'sun' : theme === 'dark' ? 'moon' : 'monitor'} />
+      </button>
+      <button class="icon-btn" title="Settings" onclick={() => settings.showModal()}><Icon name="settings" /></button>
+    </div>
+  </div>
+  {#if status}<div class="status">{status}</div>{/if}
 </header>
 
 <dialog bind:this={settings} onclick={(e) => e.target === settings && settings.close()}>
-  <button class="close" title="Close" onclick={() => settings.close()}>×</button>
+  <button class="icon-btn close" title="Close" onclick={() => settings.close()}><Icon name="x" /></button>
   <Options onio={ioFromSettings} />
 </dialog>
 
-{#if io}
-  <div class="io">
-    {#if io === 'import'}
-      <p>Paste from OneTab → "Export URLs", or pick the .txt file. Format: <code>url | title</code>, blank line between groups.</p>
-      <input type="file" accept=".txt,text/plain" onchange={loadFile} />
-    {:else}
-      <p>OneTab-compatible export ({groups.length} groups).</p>
-    {/if}
-    <textarea bind:value={ioText} readonly={io === 'export'} rows="12" spellcheck="false"></textarea>
-    <div class="row">
-      {#if io === 'import'}
-        <button onclick={doImport} disabled={!ioText.trim()}>Import</button>
-      {:else}
-        <button onclick={download}>Download .txt</button>
-        <button onclick={() => navigator.clipboard.writeText(ioText)}>Copy</button>
-      {/if}
-      <button onclick={() => (io = null)}>Close</button>
-    </div>
-  </div>
-{/if}
-
-<main>
-  {#each filtered.slice(0, shown) as g (g.id)}
-    <section role="group" aria-label={g.data.title || `${g.data.tabs.length} tabs`} class:drop-end={drop?.gid === g.id && drop.before === null}
-      ondragover={(e) => dragOver(g.id, null, e)} ondrop={dropTab}>
-      <div class="ghead">
-        <button class="caret" title={collapsed.has(g.id) ? 'Expand' : 'Minimize'} aria-expanded={!collapsed.has(g.id)}
-          onclick={() => toggle(g)}>{collapsed.has(g.id) ? '▸' : '▾'}</button>
-        {#if editing === g.id}
-          <input class="title" value={g.data.title} placeholder="Name this group" use:focus
-            onblur={(e) => saveTitle(g, e)} onkeydown={(e) => titleKey(g, e)} />
-        {:else}
-          <button class="title" title="Click to rename" onclick={() => (editing = g.id)}>{g.data.title || `${g.data.tabs.length} tabs`}</button>
-        {/if}
-        <span class="muted">{#if collapsed.has(g.id)}{g.data.tabs.length} tabs · {/if}{fmt(g.data.createdAt)}</span>
-        <button onclick={(e) => restoreAll(g, e)} title="Hold Ctrl/Cmd to keep them in the list">Restore all</button>
-        <button onclick={(e) => restoreWindow(g, e)}>In new window</button>
-        <button onclick={(e) => copyGroup(g, e)} title="Copy URLs (Shift: with titles, OneTab format)">{copied === g.id ? 'Copied!' : 'Copy'}</button>
-        <button onclick={() => updateGroup(g.id, { locked: !g.data.locked })}>{g.data.locked ? 'Unlock' : 'Lock'}</button>
-        <button onclick={() => updateGroup(g.id, { starred: !g.data.starred })}>{g.data.starred ? '★' : '☆'}</button>
-        <button class="danger" onclick={() => remove(g)}>Delete</button>
+<div class="page">
+  {#if io}
+    <div class="card io" transition:slide={motion}>
+      <div class="io-head">
+        <h2>{io === 'import' ? 'Import' : 'Export'}</h2>
+        <button class="icon-btn" title="Close" onclick={() => (io = null)}><Icon name="x" /></button>
       </div>
-      <ul hidden={collapsed.has(g.id)}>
-        {#each g.data.tabs as t (t.id)}
-          <li draggable="true" class:dragging={dragId === t.id} class:drop-before={drop?.before === t.id}
-            ondragstart={(e) => dragStart(t, e)} ondragend={dragEnd} ondragover={(e) => dragOver(g.id, t.id, e)}>
-            <button class="x" title="Remove" onclick={() => removeOne(t)}>×</button>
-            <img src={favicon(t.url)} alt="" width="16" height="16" loading="lazy" draggable="false" />
-            <a href={t.url} draggable="false" onclick={(e) => openTab(g, t, e)}>{t.title}</a>
-          </li>
-        {/each}
-      </ul>
-    </section>
-  {:else}
-    <p class="muted">No saved tabs. Click the toolbar icon to collapse your tabs here.</p>
-  {/each}
-  <div bind:this={sentinel}></div>
-</main>
+      {#if io === 'import'}
+        <p class="muted">Paste from OneTab "Export URLs", or pick the .txt file. Format: <code>url | title</code>, blank line between groups.</p>
+        <input class="file" type="file" accept=".txt,text/plain" onchange={loadFile} />
+      {:else}
+        <p class="muted">OneTab-compatible export of {groups.length} groups.</p>
+      {/if}
+      <textarea class="field" bind:value={ioText} readonly={io === 'export'} rows="12" spellcheck="false"></textarea>
+      <div class="row">
+        {#if io === 'import'}
+          <button class="btn primary" onclick={doImport} disabled={!ioText.trim()}>Import</button>
+        {:else}
+          <button class="btn primary" onclick={download}><Icon name="download" size={15} />Download .txt</button>
+          <button class="btn" onclick={() => navigator.clipboard.writeText(ioText)}><Icon name="copy" size={15} />Copy</button>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
+  <main>
+    {#each filtered.slice(0, shown) as g (g.id)}
+      <section class="card" class:starred={g.data.starred} class:pinned={g.data.pinned} transition:slide={motion} animate:flip={motion} role="group"
+        aria-label={g.data.title || `${g.data.tabs.length} tabs`} class:drop-end={drop?.gid === g.id && drop.before === null}
+        ondragover={(e) => dragOver(g.id, null, e)} ondrop={dropTab}>
+        <div class="ghead">
+          <div class="gtitle">
+            <button class="icon-btn sm" title={collapsed.has(g.id) ? 'Expand' : 'Minimize'} aria-expanded={!collapsed.has(g.id)}
+              onclick={() => toggle(g)}><Icon name={collapsed.has(g.id) ? 'chevronRight' : 'chevronDown'} /></button>
+            {#if editing === g.id}
+              <input class="field title-input" value={g.data.title} placeholder="Name this group" use:focus
+                onblur={(e) => saveTitle(g, e)} onkeydown={(e) => titleKey(g, e)} />
+            {:else}
+              <button class="title" title="Click to rename" onclick={() => (editing = g.id)}>{g.data.title || `${g.data.tabs.length} tabs`}</button>
+            {/if}
+            <span class="meta">
+              {#if g.data.title || collapsed.has(g.id)}<span class="pill">{g.data.tabs.length}</span>{/if}
+              {fmt(g.data.createdAt)}
+              {#if g.data.pinned}<span class="pill lock"><Icon name="pin" size={11} />Pinned</span>{/if}
+              {#if g.data.locked}<span class="pill lock"><Icon name="lock" size={11} />Locked</span>{/if}
+            </span>
+          </div>
+          <div class="gactions">
+            <button class="btn" onclick={(e) => restoreAll(g, e)} title="Open all here. Hold Ctrl/Cmd to keep them in the list">
+              <Icon name="restore" size={15} />Restore all
+            </button>
+            <button class="icon-btn" onclick={(e) => restoreWindow(g, e)} title="Restore in new window"><Icon name="window" /></button>
+            <button class="icon-btn" class:on={copied === g.id} onclick={(e) => copyGroup(g, e)}
+              title={copied === g.id ? 'Copied' : 'Copy URLs (Shift: with titles, OneTab format)'}>
+              <Icon name={copied === g.id ? 'check' : 'copy'} />
+            </button>
+            <button class="icon-btn" class:on={g.data.locked} onclick={() => updateGroup(g.id, { locked: !g.data.locked })}
+              title={g.data.locked ? 'Unlock: restoring removes tabs again' : 'Lock: keep tabs in the list when restoring'}>
+              <Icon name={g.data.locked ? 'lock' : 'unlock'} />
+            </button>
+            <button class="icon-btn" class:on={g.data.pinned} onclick={() => updateGroup(g.id, { pinned: !g.data.pinned })}
+              title={g.data.pinned ? 'Unpin' : 'Pin to top'}>
+              <Icon name="pin" filled={g.data.pinned} />
+            </button>
+            <button class="icon-btn star" class:on={g.data.starred} onclick={() => updateGroup(g.id, { starred: !g.data.starred })}
+              title={g.data.starred ? 'Unstar' : 'Star (listed right after pinned groups)'}>
+              <Icon name="star" filled={g.data.starred} />
+            </button>
+            <button class="icon-btn danger" onclick={() => remove(g)} title="Delete group"><Icon name="trash" /></button>
+          </div>
+        </div>
+        <ul hidden={collapsed.has(g.id)}>
+          {#each g.data.tabs as t (t.id)}
+            <li transition:slide={motion} animate:flip={motion} draggable="true" class:dragging={dragId === t.id}
+              class:drop-before={drop?.before === t.id}
+              ondragstart={(e) => dragStart(t, e)} ondragend={dragEnd} ondragover={(e) => dragOver(g.id, t.id, e)}>
+              <span class="grip" aria-hidden="true"><Icon name="grip" size={14} /></span>
+              <img src={favicon(t.url)} alt="" width="16" height="16" loading="lazy" draggable="false" />
+              <a href={t.url} draggable="false" title={t.url} onclick={(e) => openTab(g, t, e)}>{t.title}</a>
+              <span class="host">{host(t.url)}</span>
+              <button class="icon-btn sm danger remove" title="Remove from list" onclick={() => removeOne(t)}><Icon name="x" size={14} /></button>
+            </li>
+          {/each}
+        </ul>
+      </section>
+    {:else}
+      <div class="empty card">
+        <p><strong>No saved tabs yet</strong></p>
+        <p class="muted">Click the TabSync toolbar icon to send your open tabs here.</p>
+      </div>
+    {/each}
+    <div bind:this={sentinel}></div>
+  </main>
+</div>
 
 {#if toast}
-  <div class="toast" role="status">
-    {toast.text}
-    <button onclick={doUndo}>Undo</button>
-    <button class="x" title="Dismiss" onclick={() => (toast = null)}>×</button>
+  <div class="toast" role="status" transition:fly={{ y: 16, duration: motion.duration }}>
+    <span>{toast.text}</span>
+    <button class="btn ghost" onclick={doUndo}><Icon name="undo" size={15} />Undo</button>
+    <button class="icon-btn sm" title="Dismiss" onclick={() => (toast = null)}><Icon name="x" size={14} /></button>
   </div>
 {/if}
 
 <style>
-  :global(body) { font: 14px/1.4 system-ui, sans-serif; margin: 0; background: Canvas; color: CanvasText; }
   /* z-index: sections use content-visibility, which makes them paint over a plain sticky header */
-  header { position: sticky; top: 0; z-index: 10; display: flex; gap: 8px; align-items: center; padding: 10px max(16px, calc((100% - 1000px) / 2 + 16px)); background: Canvas; border-bottom: 1px solid #8884; flex-wrap: wrap; }
-  h1 { font-size: 18px; margin: 0 8px 0 0; }
-  small, .muted { color: GrayText; font-weight: normal; font-size: 12px; }
-  input { flex: 1; min-width: 160px; padding: 6px 8px; }
-  main { padding: 8px 16px 40px; max-width: 1000px; margin: 0 auto; box-sizing: border-box; }
-  section { padding: 12px 0; border-bottom: 1px solid #8883; content-visibility: auto; contain-intrinsic-size: auto 200px; }
-  .ghead { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
-  button.title { border: 0; background: none; padding: 0; margin-right: 4px; font-size: 14px; font-weight: bold; color: inherit; }
-  input.title { flex: 0 1 260px; min-width: 120px; padding: 2px 6px; font: bold 14px system-ui, sans-serif; }
+  header {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 85%, transparent);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+  }
+  .bar, .page { max-width: 1040px; margin: 0 auto; padding-inline: 20px; }
+  .bar { display: flex; align-items: center; gap: 16px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  h1 { font-size: 16px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+  .count { font-size: 12px; color: var(--muted); background: var(--surface-2); padding: 2px 8px; border-radius: 99px; }
+  .search {
+    flex: 1; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; min-width: 140px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--muted);
+  }
+  .search:focus-within { border-color: var(--muted); box-shadow: 0 0 0 3px var(--surface-2); }
+  .search input { flex: 1; border: 0; outline: 0; background: none; color: var(--text); height: 100%; min-width: 0; }
+  .actions { display: flex; align-items: center; gap: 2px; }
+  .status { max-width: 1040px; margin: -6px auto 0; padding: 0 20px 8px; font-size: 12px; color: var(--muted); }
+
+  .sync { color: var(--muted); font-weight: 500; }
+  .sync .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
+  .sync.busy .dot { background: var(--warn); animation: pulse 1s ease-in-out infinite; }
+  .sync.off .dot { background: var(--muted); box-shadow: none; }
+  .sync.bad { color: var(--danger); }
+  .sync.bad .dot { background: var(--danger); box-shadow: 0 0 0 3px var(--danger-soft); }
+  @keyframes pulse { 50% { opacity: 0.35; } }
+
+  .page { padding-top: 20px; padding-bottom: 60px; }
+  main { display: grid; gap: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
+  section { padding: 10px 10px 8px; content-visibility: auto; contain-intrinsic-size: auto 220px; }
+  section.starred { border-color: color-mix(in srgb, var(--star) 45%, var(--border)); }
+  section.pinned { border-color: color-mix(in srgb, var(--text) 55%, var(--border)); }
+
+  .ghead { display: flex; align-items: center; gap: 12px; padding: 0 2px 6px; flex-wrap: wrap; }
+  .gtitle { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; }
+  .title {
+    border: 0; background: none; padding: 3px 6px; border-radius: 6px; cursor: text;
+    font-size: 15px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch;
+  }
+  .title:hover { background: var(--surface-2); }
+  .title-input { height: 30px; font-size: 15px; font-weight: 600; width: min(320px, 100%); }
+  .meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .pill { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 99px; background: var(--surface-2); font-size: 11px; font-weight: 500; }
+  .pill.lock { color: var(--accent); background: var(--accent-soft); }
+  .gactions { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+  .gactions .btn { margin-right: 6px; }
+  .star.on { color: var(--star); }
+
   ul { list-style: none; margin: 0; padding: 0; }
-  li { display: flex; gap: 6px; align-items: center; padding: 2px 0; min-width: 0; }
-  li a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: LinkText; text-decoration: none; }
-  li a:hover { text-decoration: underline; }
-  button { font: inherit; font-size: 12px; cursor: pointer; }
-  .x { border: 0; background: none; color: GrayText; font-size: 14px; padding: 0 4px; }
-  .danger { color: #c33; }
-  .sync { display: inline-flex; align-items: center; gap: 6px; }
-  .sync .dot { width: 7px; height: 7px; border-radius: 50%; background: #3a3; }
-  .sync:disabled .dot { background: #d90; }
-  .sync.bad { color: #c33; }
-  .sync.bad .dot { background: #c33; }
-  li[draggable='true'] { cursor: grab; }
-  li.dragging { opacity: 0.4; }
-  li.drop-before { box-shadow: 0 -2px 0 LinkText; }
-  section.drop-end ul { box-shadow: 0 2px 0 LinkText; }
-  section.drop-end:has(ul[hidden]) { outline: 2px dashed LinkText; outline-offset: -2px; }
-  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20; display: flex; gap: 10px; align-items: center;
-    padding: 8px 10px 8px 14px; border-radius: 8px; background: CanvasText; color: Canvas; box-shadow: 0 4px 16px #0004; font-size: 13px; }
-  .toast button { color: inherit; background: none; border: 1px solid currentColor; border-radius: 4px; padding: 2px 8px; }
-  .toast .x { border: 0; color: inherit; }
-  .caret { border: 0; background: none; padding: 0 2px; width: 18px; color: GrayText; }
   ul[hidden] { display: none; }
-  dialog { border: 1px solid #8884; border-radius: 8px; padding: 8px 0 16px; width: min(460px, calc(100vw - 32px)); background: Canvas; color: CanvasText; }
-  dialog::backdrop { background: #0006; }
-  .close { position: absolute; top: 8px; right: 10px; border: 0; background: none; font-size: 20px; color: GrayText; }
-  .io { margin: 12px auto; width: calc(100% - 32px); box-sizing: border-box; padding: 12px; border: 1px solid #8884; border-radius: 6px; max-width: 968px; display: grid; gap: 8px; }
+  li { display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 4px 0 2px; border-radius: 7px; min-width: 0; cursor: grab; }
+  li:hover { background: var(--surface-2); }
+  li img { flex: none; border-radius: 3px; }
+  li a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); text-decoration: none; }
+  li a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  .host { flex: none; max-width: 22ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--muted); }
+  .grip { color: var(--muted); opacity: 0; transition: opacity 0.12s; }
+  .remove { opacity: 0; }
+  li:hover .grip, li:hover .remove, .remove:focus-visible { opacity: 1; }
+  li.dragging { opacity: 0.4; }
+  li.drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+  section.drop-end ul { box-shadow: 0 2px 0 var(--accent); }
+  section.drop-end:has(ul[hidden]) { outline: 2px dashed var(--accent); outline-offset: -2px; }
+
+  .io { padding: 16px; margin-bottom: 14px; display: grid; gap: 10px; }
+  .io-head { display: flex; align-items: center; justify-content: space-between; }
+  .io h2 { font-size: 15px; margin: 0; }
   .io p { margin: 0; font-size: 13px; }
-  .io textarea { width: 100%; box-sizing: border-box; font: 12px ui-monospace, monospace; }
-  .row { display: flex; gap: 6px; }
-  .status { font-size: 12px; color: GrayText; }
+  .io textarea { width: 100%; font: 12px/1.5 ui-monospace, 'Cascadia Code', monospace; resize: vertical; }
+  .file { font-size: 13px; color: var(--muted); }
+  .row { display: flex; gap: 8px; }
+
+  .empty { padding: 48px 20px; text-align: center; }
+  .empty p { margin: 4px 0; }
+
+  dialog { width: min(480px, calc(100vw - 32px)); }
+  .close { position: absolute; top: 12px; right: 12px; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 20;
+    display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 16px;
+    background: var(--text); color: var(--bg); border-radius: 12px; box-shadow: var(--shadow-lg); font-size: 13px;
+  }
+  .toast span { margin-right: 6px; }
+  .toast .btn, .toast .icon-btn { color: var(--bg); }
+  .toast .btn:hover, .toast .icon-btn:hover { background: color-mix(in srgb, var(--bg) 18%, transparent); color: var(--bg); }
+
+  @media (max-width: 720px) {
+    .bar { flex-wrap: wrap; height: auto; padding-block: 10px; }
+    .search { order: 3; flex-basis: 100%; }
+    .host { display: none; }
+  }
 </style>

@@ -10,7 +10,18 @@ const rec = (id, data) => ({ id, ts: now(), dirty: true, deleted: false, data })
 const tomb = (id) => ({ id, ts: now(), dirty: true, deleted: true, data: null });
 const live = (r) => !r.deleted;
 
+// runtime.sendMessage never reaches the sender's own page, so same-context listeners are
+// notified directly; other pages (and the list, for edits made by the worker) get the message.
+const listeners = new Set();
+export function onChanged(fn) {
+  const onMsg = (m) => m?.type === 'changed' && fn();
+  listeners.add(fn);
+  chrome.runtime.onMessage.addListener(onMsg);
+  return () => { listeners.delete(fn); chrome.runtime.onMessage.removeListener(onMsg); };
+}
+
 function changed() {
+  for (const fn of listeners) fn();
   chrome.runtime.sendMessage({ type: 'changed', local: true }).catch(() => {});
 }
 
@@ -21,7 +32,7 @@ function groupRecords(gid, meta, tabs, idFor = () => crypto.randomUUID()) {
   ];
 }
 
-const newMeta = (createdAt = Date.now()) => ({ title: '', createdAt, locked: false, starred: false });
+const newMeta = (createdAt = Date.now()) => ({ title: '', createdAt, locked: false, starred: false, pinned: false });
 
 // URLs already in the list are dropped silently, so the stored copy (and its title) wins.
 export async function createGroup(tabs) {
@@ -125,7 +136,8 @@ export async function listGroups() {
     list.sort((a, b) => a.pos - b.pos || (a.id < b.id ? -1 : 1));
     out.push({ id, data: { ...meta, tabs: list } });
   }
-  return out.sort((a, b) => (b.data.starred - a.data.starred) || (b.data.createdAt - a.data.createdAt));
+  // pinned first, then starred, then newest; older records have no `pinned` field (treated as false)
+  return out.sort((a, b) => (!!b.data.pinned - !!a.data.pinned) || (b.data.starred - a.data.starred) || (b.data.createdAt - a.data.createdAt));
 }
 
 // Split v1 whole-group records into per-tab records. IDs are derived from the

@@ -1,6 +1,6 @@
 // Tiny IndexedDB wrapper. Data lives on disk, not in RAM.
 // records: { id, ts, deleted, dirty, data }
-//   "g:<uuid>" group meta: { title, createdAt, locked, starred }
+//   "g:<uuid>" group meta: { title, createdAt, locked, starred, pinned }
 //   "t:<...>"  tab:        { groupId, url, title, pos }  (indexed by url and groupId)
 //   bare uuid  legacy v1 whole-group record, split by migrateLegacy()
 let dbp;

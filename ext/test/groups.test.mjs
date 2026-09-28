@@ -96,6 +96,14 @@ await G.moveTab(u.id, m, m1.id);
 assert.deepEqual(await mt(), ['U', 'm1', 'm2', 'm3']);
 assert.ok((await db.get(g4)).deleted, 'emptied group is tombstoned');
 
+// pinned groups sort above starred ones, which sort above the rest
+const [pA, pB, pC] = [await G.createGroup([{ url: 'https://pa', title: 'pa' }]),
+  await G.createGroup([{ url: 'https://pb', title: 'pb' }]), await G.createGroup([{ url: 'https://pc', title: 'pc' }])];
+await G.updateGroup(pA, { pinned: true });
+await G.updateGroup(pB, { starred: true });
+const order = (await G.listGroups()).map((g) => g.id);
+assert.ok(order.indexOf(pA) === 0 && order.indexOf(pB) === 1 && order.indexOf(pC) > 1, 'pinned > starred > rest');
+
 // import keeps order and ids are per-tab
 await G.importGroups([[{ url: 'https://1', title: '1' }], [{ url: 'https://2', title: '2' }]]);
 const titles = (await G.listGroups()).map((g) => g.data.tabs[0].title).filter((t) => t === '1' || t === '2');

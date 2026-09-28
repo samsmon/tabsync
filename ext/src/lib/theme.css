@@ -1,0 +1,141 @@
+/* Monochrome (zinc) palette; the only hues are danger red and the starred yellow.
+   Shared look for the list page and settings. Colors are tokens; dark mode follows the OS. */
+:root {
+  color-scheme: light dark;
+  --bg: #fafafa;
+  --surface: #ffffff;
+  --surface-2: #f4f4f5;
+  --border: #e4e4e7;
+  --text: #18181b;
+  --muted: #71717a;
+  --accent: #18181b;
+  --accent-soft: #e4e4e7;
+  --accent-text: #ffffff;
+  --danger: #c93b3b;
+  --danger-soft: #fcecec;
+  --ok: #18181b;
+  --warn: #a1a1aa;
+  --star: #eab308;
+  --shadow: 0 1px 2px #0000000d, 0 2px 8px #0000000a;
+  --shadow-lg: 0 8px 32px #00000026;
+  --radius: 10px;
+  --radius-sm: 7px;
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* data-theme="light" | "dark" (set by the theme toggle) overrides the OS; unset follows the OS. */
+:root[data-theme='light'] { color-scheme: light; }
+:root[data-theme='dark'] { color-scheme: dark; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0f0f10;
+    --surface: #18181b;
+    --surface-2: #27272a;
+    --border: #2e2e33;
+    --text: #fafafa;
+    --muted: #a1a1aa;
+    --accent: #fafafa;
+    --accent-soft: #3f3f46;
+    --accent-text: #18181b;
+    --danger: #f07171;
+    --danger-soft: #3a2224;
+    --ok: #fafafa;
+    --warn: #71717a;
+    --shadow: 0 1px 2px #0000004d;
+    --shadow-lg: 0 8px 32px #00000080;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #0f0f10;
+  --surface: #18181b;
+  --surface-2: #27272a;
+  --border: #2e2e33;
+  --text: #fafafa;
+  --muted: #a1a1aa;
+  --accent: #fafafa;
+  --accent-soft: #3f3f46;
+  --accent-text: #18181b;
+  --danger: #f07171;
+  --danger-soft: #3a2224;
+  --ok: #fafafa;
+  --warn: #71717a;
+  --shadow: 0 1px 2px #0000004d;
+  --shadow-lg: 0 8px 32px #00000080;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 14px/1.45 var(--font);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+
+button, input, textarea { font: inherit; color: inherit; }
+
+/* Buttons: .btn (default), .btn.primary, .btn.ghost, .btn.danger; .icon-btn for square icon buttons */
+.btn, .icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.btn:hover:not(:disabled), .icon-btn:hover:not(:disabled) { background: var(--surface-2); }
+.btn:disabled, .icon-btn:disabled { opacity: 0.55; cursor: default; }
+.btn:focus-visible, .icon-btn:focus-visible, input:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.btn.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.08); }
+.btn.ghost, .icon-btn { background: transparent; border-color: transparent; }
+.btn.ghost:hover:not(:disabled), .icon-btn:hover:not(:disabled) { background: var(--surface-2); }
+.btn.danger, .icon-btn.danger:hover:not(:disabled) { color: var(--danger); }
+.icon-btn.danger:hover:not(:disabled) { background: var(--danger-soft); }
+.icon-btn { width: 30px; padding: 0; color: var(--muted); }
+.icon-btn:hover:not(:disabled) { color: var(--text); }
+.icon-btn.sm { width: 24px; height: 24px; border-radius: 6px; }
+.icon-btn.on { color: var(--accent); }
+
+.field {
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+textarea.field { height: auto; padding: 10px 11px; }
+
+code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  font: 12px ui-monospace, 'Cascadia Code', monospace;
+}
+
+.muted { color: var(--muted); }
+
+dialog {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 0;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+}
+dialog::backdrop { background: #0008; backdrop-filter: blur(2px); }
