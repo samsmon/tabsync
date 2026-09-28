@@ -1,10 +1,22 @@
 {
   "manifest_version": 3,
   "name": "TabSync",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Collapse tabs into a list, synced end-to-end encrypted across your devices.",
-  "action": { "default_title": "Send tabs to TabSync" },
-  "background": { "service_worker": "background.js", "type": "module" },
+  "action": {
+    "default_title": "Send tabs to TabSync"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
   "options_page": "options.html",
-  "permissions": ["tabs", "storage", "unlimitedStorage", "alarms", "contextMenus", "favicon"]
+  "permissions": [
+    "tabs",
+    "storage",
+    "unlimitedStorage",
+    "alarms",
+    "contextMenus",
+    "favicon"
+  ]
 }
