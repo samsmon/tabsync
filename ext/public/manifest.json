@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "TabSync",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Collapse tabs into a list, synced end-to-end encrypted across your devices.",
   "action": {
     "default_title": "Send tabs to TabSync",
