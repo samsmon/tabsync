@@ -10,7 +10,10 @@
   import { getTheme, setTheme, THEMES } from '../lib/theme.js';
 
   // Tabs/groups slide out when restored or removed and glide when reordered.
-  const motion = { duration: matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180 };
+  // Off for the first render, so the initial list doesn't slide in card by card.
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let animated = $state(false);
+  const motion = $derived({ duration: animated && !reduced ? 180 : 0 });
 
   const PAGE = 30;
   let groups = $state([]);
@@ -90,6 +93,7 @@
 
   onMount(() => {
     reload().then(() => {
+      requestAnimationFrame(() => (animated = true));
       // Settings links here as list.html#import / #export
       if (location.hash === '#import') openImport();
       if (location.hash === '#export') openExport();
@@ -310,7 +314,7 @@
 
   <main>
     {#each filtered.slice(0, shown) as g (g.id)}
-      <section class="card" class:starred={g.data.starred} class:pinned={g.data.pinned} transition:slide={motion} animate:flip={motion} role="group"
+      <section class="card" class:starred={g.data.starred} class:pinned={g.data.pinned} out:slide={motion} animate:flip={motion} role="group"
         aria-label={g.data.title || `${g.data.tabs.length} tabs`} class:drop-end={drop?.gid === g.id && drop.before === null}
         ondragover={(e) => dragOver(g.id, null, e)} ondrop={dropTab}>
         <div class="ghead">
@@ -394,7 +398,7 @@
     backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--border);
   }
-  .bar, .page { max-width: 1040px; margin: 0 auto; padding-inline: 20px; }
+  .bar, .page { width: 100%; max-width: 1040px; margin: 0 auto; padding-inline: 20px; }
   .bar { display: flex; align-items: center; gap: 16px; height: 60px; }
   .brand { display: flex; align-items: center; gap: 10px; }
   h1 { font-size: 16px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
@@ -417,24 +421,25 @@
   @keyframes pulse { 50% { opacity: 0.35; } }
 
   .page { padding-top: 20px; padding-bottom: 60px; }
-  main { display: grid; gap: 14px; }
+  /* minmax(0, 1fr): without it a long nowrap title stretches the grid column past the window */
+  main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
-  section { padding: 10px 10px 8px; content-visibility: auto; contain-intrinsic-size: auto 220px; }
+  section { min-width: 0; padding: 10px 10px 8px; content-visibility: auto; contain-intrinsic-size: auto 220px; }
   section.starred { border-color: color-mix(in srgb, var(--star) 45%, var(--border)); }
   section.pinned { border-color: color-mix(in srgb, var(--text) 55%, var(--border)); }
 
-  .ghead { display: flex; align-items: center; gap: 12px; padding: 0 2px 6px; flex-wrap: wrap; }
-  .gtitle { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1; }
+  .ghead { display: flex; align-items: center; gap: 12px; padding: 0 2px 6px; min-width: 0; }
+  .gtitle { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 0; overflow: hidden; }
   .title {
     border: 0; background: none; padding: 3px 6px; border-radius: 6px; cursor: text;
-    font-size: 15px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 40ch;
+    font-size: 15px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 0 1 auto; max-width: 100%;
   }
   .title:hover { background: var(--surface-2); }
   .title-input { height: 30px; font-size: 15px; font-weight: 600; width: min(320px, 100%); }
-  .meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .meta { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); white-space: nowrap; flex: 0 1 auto; min-width: 0; overflow: hidden; }
   .pill { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 99px; background: var(--surface-2); font-size: 11px; font-weight: 500; }
   .pill.lock { color: var(--accent); background: var(--accent-soft); }
-  .gactions { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+  .gactions { display: flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
   .gactions .btn { margin-right: 6px; }
   .star.on { color: var(--star); }
 

@@ -16,6 +16,7 @@
   --ok: #18181b;
   --warn: #a1a1aa;
   --star: #eab308;
+  --scrollbar: #d4d4d8;
   --shadow: 0 1px 2px #0000000d, 0 2px 8px #0000000a;
   --shadow-lg: 0 8px 32px #00000026;
   --radius: 10px;
@@ -44,6 +45,7 @@
     --warn: #71717a;
     --shadow: 0 1px 2px #0000004d;
     --shadow-lg: 0 8px 32px #00000080;
+    --scrollbar: #3f3f46;
   }
 }
 
@@ -63,9 +65,17 @@
   --warn: #71717a;
   --shadow: 0 1px 2px #0000004d;
   --shadow-lg: 0 8px 32px #00000080;
+  --scrollbar: #3f3f46;
 }
 
 * { box-sizing: border-box; }
+
+/* Reserve the scrollbar lane so the layout does not shift when it appears or disappears. */
+html { scrollbar-gutter: stable; scrollbar-color: var(--scrollbar) transparent; }
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 99px; border: 3px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
 body {
   margin: 0;
