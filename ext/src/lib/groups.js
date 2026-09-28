@@ -19,6 +19,21 @@ export async function createGroup(tabs) {
   return id;
 }
 
+// Bulk import keeps the source order: first group is treated as newest.
+export async function importGroups(tabLists) {
+  const base = Date.now();
+  for (let i = 0; i < tabLists.length; i++) {
+    await db.put({
+      id: crypto.randomUUID(),
+      ts: now(),
+      dirty: true,
+      deleted: false,
+      data: { title: '', createdAt: base - i, locked: false, starred: false, tabs: tabLists[i] },
+    });
+  }
+  chrome.runtime.sendMessage({ type: 'changed', local: true }).catch(() => {});
+}
+
 export async function updateGroup(id, patch) {
   const g = await db.get(id);
   if (!g || g.deleted) return;

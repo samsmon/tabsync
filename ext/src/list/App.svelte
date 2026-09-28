@@ -1,6 +1,7 @@
 <script>
   import { onMount } from 'svelte';
-  import { listGroups, updateGroup, deleteGroup } from '../lib/groups.js';
+  import { listGroups, updateGroup, deleteGroup, importGroups } from '../lib/groups.js';
+  import { parseOneTab, toOneTab } from '../lib/onetab.js';
   import { sync } from '../lib/sync.js';
 
   const PAGE = 30;
@@ -71,6 +72,35 @@
     if (confirm(`Delete ${g.data.tabs.length} tabs?`)) deleteGroup(g.id);
   }
 
+  let io = $state(null); // null | 'import' | 'export'
+  let ioText = $state('');
+
+  function openImport() { io = 'import'; ioText = ''; }
+  function openExport() { io = 'export'; ioText = toOneTab(groups); }
+
+  async function doImport() {
+    const parsed = parseOneTab(ioText);
+    if (!parsed.length) { status = 'Nothing to import'; return; }
+    await importGroups(parsed);
+    status = `Imported ${parsed.reduce((n, g) => n + g.length, 0)} tabs in ${parsed.length} groups`;
+    io = null;
+    await reload();
+    doSync();
+  }
+
+  async function loadFile(e) {
+    const f = e.currentTarget.files?.[0];
+    if (f) ioText = await f.text();
+  }
+
+  function download() {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([ioText], { type: 'text/plain' }));
+    a.download = `tabsync-${new Date().toISOString().slice(0, 10)}.txt`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
   const favicon = (url) => `/_favicon/?pageUrl=${encodeURIComponent(url)}&size=16`;
   const fmt = (ms) => new Date(ms).toLocaleString();
 </script>
@@ -79,9 +109,32 @@
   <h1>TabSync <small>{total} tabs</small></h1>
   <input type="search" placeholder="Search tabs…" bind:value={q} />
   <button onclick={doSync}>Sync</button>
+  <button onclick={openImport}>Import</button>
+  <button onclick={openExport}>Export</button>
   <a href="options.html" target="_blank">Settings</a>
   {#if status}<span class="status">{status}</span>{/if}
 </header>
+
+{#if io}
+  <div class="io">
+    {#if io === 'import'}
+      <p>Paste from OneTab → "Export URLs", or pick the .txt file. Format: <code>url | title</code>, blank line between groups.</p>
+      <input type="file" accept=".txt,text/plain" onchange={loadFile} />
+    {:else}
+      <p>OneTab-compatible export ({groups.length} groups).</p>
+    {/if}
+    <textarea bind:value={ioText} readonly={io === 'export'} rows="12" spellcheck="false"></textarea>
+    <div class="row">
+      {#if io === 'import'}
+        <button onclick={doImport} disabled={!ioText.trim()}>Import</button>
+      {:else}
+        <button onclick={download}>Download .txt</button>
+        <button onclick={() => navigator.clipboard.writeText(ioText)}>Copy</button>
+      {/if}
+      <button onclick={() => (io = null)}>Close</button>
+    </div>
+  </div>
+{/if}
 
 <main>
   {#each filtered.slice(0, shown) as g (g.id)}
@@ -129,5 +182,9 @@
   button { font: inherit; font-size: 12px; cursor: pointer; }
   .x { border: 0; background: none; color: GrayText; font-size: 14px; padding: 0 4px; }
   .danger { color: #c33; }
+  .io { margin: 12px 16px; padding: 12px; border: 1px solid #8884; border-radius: 6px; max-width: 968px; display: grid; gap: 8px; }
+  .io p { margin: 0; font-size: 13px; }
+  .io textarea { width: 100%; box-sizing: border-box; font: 12px ui-monospace, monospace; }
+  .row { display: flex; gap: 6px; }
   .status { font-size: 12px; color: GrayText; }
 </style>
