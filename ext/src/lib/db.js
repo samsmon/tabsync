@@ -1,14 +1,25 @@
 // Tiny IndexedDB wrapper. Data lives on disk, not in RAM.
-// groups: { id, ts, deleted, dirty, data: { title, createdAt, locked, starred, tabs:[{url,title}] } }
+// records: { id, ts, deleted, dirty, data }
+//   "g:<uuid>" group meta: { title, createdAt, locked, starred }
+//   "t:<...>"  tab:        { groupId, url, title, pos }
+//   bare uuid  legacy v1 whole-group record, split by migrateLegacy()
 let dbp;
 
 function open() {
   dbp ??= new Promise((resolve, reject) => {
-    const req = indexedDB.open('tabsync', 1);
-    req.onupgradeneeded = () => {
+    const req = indexedDB.open('tabsync', 2);
+    req.onupgradeneeded = (e) => {
       const db = req.result;
-      db.createObjectStore('groups', { keyPath: 'id' });
-      db.createObjectStore('kv');
+      if (e.oldVersion < 1) db.createObjectStore('kv');
+      db.createObjectStore('records', { keyPath: 'id' });
+      if (e.oldVersion === 1) {
+        const tx = req.transaction;
+        const records = tx.objectStore('records');
+        tx.objectStore('groups').getAll().onsuccess = (ev) => {
+          for (const g of ev.target.result) records.put(g);
+          db.deleteObjectStore('groups');
+        };
+      }
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -28,9 +39,15 @@ async function store(name, mode = 'readonly') {
 }
 
 export const db = {
-  async get(id) { return wrap((await store('groups')).get(id)); },
-  async put(g) { return wrap((await store('groups', 'readwrite')).put(g)); },
-  async all() { return wrap((await store('groups')).getAll()); },
+  async get(id) { return wrap((await store('records')).get(id)); },
+  async put(r) { return wrap((await store('records', 'readwrite')).put(r)); },
+  async putMany(rs) {
+    const tx = (await open()).transaction('records', 'readwrite');
+    const s = tx.objectStore('records');
+    for (const r of rs) s.put(r);
+    return new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); });
+  },
+  async all() { return wrap((await store('records')).getAll()); },
   async kvGet(k) { return wrap((await store('kv')).get(k)); },
   async kvSet(k, v) { return wrap((await store('kv', 'readwrite')).put(v, k)); },
 };

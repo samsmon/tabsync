@@ -1,4 +1,5 @@
 import { db } from './db.js';
+import { migrateLegacy } from './groups.js';
 import { deriveKey, encrypt, decrypt, newSalt, makeVerifier, checkVerifier, exportKey, importKey } from './crypto.js';
 
 async function config() {
@@ -48,24 +49,8 @@ async function doSync() {
   const cfg = await config();
   if (!cfg) return { skipped: true };
 
-  // push local changes
-  const dirty = (await db.all()).filter((g) => g.dirty);
-  if (dirty.length) {
-    const records = await Promise.all(
-      dirty.map(async (g) => ({
-        id: g.id,
-        ts: g.ts,
-        deleted: g.deleted,
-        blob: g.deleted ? '' : await encrypt(cfg.key, g.data),
-      })),
-    );
-    const res = await api(cfg, '/v1/push', { method: 'POST', body: JSON.stringify({ records }) });
-    if (!res.ok) throw new Error(`push ${res.status}`);
-    for (const g of dirty) {
-      const cur = await db.get(g.id);
-      if (cur && cur.ts === g.ts) await db.put({ ...cur, dirty: false });
-    }
-  }
+  await migrateLegacy();
+  let pushed = await push(cfg);
 
   // pull remote changes (last-writer-wins by ts)
   let cursor = (await db.kvGet('cursor')) ?? 0;
@@ -85,6 +70,35 @@ async function doSync() {
     await db.kvSet('cursor', cursor);
     if (!page.more) break;
   }
+  // pulled v1 records from a not-yet-upgraded device get split and pushed back
+  if (await migrateLegacy()) pushed += await push(cfg);
   if (pulled) chrome.runtime.sendMessage({ type: 'changed' }).catch(() => {});
-  return { pushed: dirty.length, pulled };
+  return { pushed, pulled };
+}
+
+const BATCH = 500;
+
+async function push(cfg) {
+  const dirty = (await db.all()).filter((r) => r.dirty);
+  for (let i = 0; i < dirty.length; i += BATCH) {
+    const chunk = dirty.slice(i, i + BATCH);
+    const records = await Promise.all(
+      chunk.map(async (r) => ({
+        id: r.id,
+        ts: r.ts,
+        deleted: r.deleted,
+        blob: r.deleted ? '' : await encrypt(cfg.key, r.data),
+      })),
+    );
+    const res = await api(cfg, '/v1/push', { method: 'POST', body: JSON.stringify({ records }) });
+    if (!res.ok) throw new Error(`push ${res.status}`);
+    // only clear dirty if nothing changed locally while we were uploading
+    const clean = [];
+    for (const r of chunk) {
+      const cur = await db.get(r.id);
+      if (cur && cur.ts === r.ts) clean.push({ ...cur, dirty: false });
+    }
+    await db.putMany(clean);
+  }
+  return dirty.length;
 }

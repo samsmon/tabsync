@@ -1,6 +1,6 @@
 <script>
   import { onMount } from 'svelte';
-  import { listGroups, updateGroup, deleteGroup, importGroups } from '../lib/groups.js';
+  import { listGroups, updateGroup, deleteGroup, importGroups, removeTab } from '../lib/groups.js';
   import { parseOneTab, toOneTab } from '../lib/onetab.js';
   import { sync } from '../lib/sync.js';
 
@@ -42,15 +42,10 @@
     return () => { chrome.runtime.onMessage.removeListener(onMsg); io.disconnect(); };
   });
 
-  function openTab(g, i, e) {
+  function openTab(g, t, e) {
     e.preventDefault();
-    const t = g.data.tabs[i];
     chrome.tabs.create({ url: t.url, active: false });
-    if (!g.data.locked) updateGroup(g.id, { tabs: g.data.tabs.filter((_, j) => j !== i) });
-  }
-
-  function removeTab(g, i) {
-    updateGroup(g.id, { tabs: g.data.tabs.filter((_, j) => j !== i) });
+    if (!g.data.locked) removeTab(t.id);
   }
 
   async function restoreAll(g) {
@@ -150,11 +145,11 @@
         <button class="danger" onclick={() => remove(g)}>Delete</button>
       </div>
       <ul>
-        {#each g.data.tabs as t, i (t.url + i)}
+        {#each g.data.tabs as t (t.id)}
           <li>
-            <button class="x" title="Remove" onclick={() => removeTab(g, i)}>×</button>
+            <button class="x" title="Remove" onclick={() => removeTab(t.id)}>×</button>
             <img src={favicon(t.url)} alt="" width="16" height="16" loading="lazy" />
-            <a href={t.url} onclick={(e) => openTab(g, i, e)}>{t.title}</a>
+            <a href={t.url} onclick={(e) => openTab(g, t, e)}>{t.title}</a>
           </li>
         {/each}
       </ul>
