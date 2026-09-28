@@ -1,9 +1,37 @@
 <script>
   import { onMount } from 'svelte';
   import { setup } from '../lib/sync.js';
+  import { checkForUpdate, pickFolder, getFolder, currentVersion } from '../lib/updater.js';
+  import { deviceName, setDeviceName } from '../lib/device.js';
 
   // Inside the list page's modal, import/export open in place instead of navigating.
   let { onio } = $props();
+
+  let device = $state('');
+  onMount(async () => { device = await deviceName(); });
+  async function saveDevice() {
+    await setDeviceName(device);
+    device = await deviceName(); // empty resets to the detected name
+  }
+
+  let folderName = $state('');
+  let updMsg = $state('');
+  onMount(async () => { folderName = (await getFolder())?.name ?? ''; });
+
+  async function checkNow() {
+    updMsg = 'Checking…';
+    try {
+      const u = await checkForUpdate();
+      updMsg = u.version ? `v${u.version} is available. Use the Update button on the list page.` : 'You have the latest version.';
+    } catch (e) { updMsg = 'Error: ' + e.message; }
+  }
+
+  async function changeFolder() {
+    try {
+      folderName = (await pickFolder()).name;
+      updMsg = '';
+    } catch (e) { if (e.name !== 'AbortError') updMsg = 'Error: ' + e.message; }
+  }
 
   let server = $state('');
   let token = $state('');
@@ -63,6 +91,14 @@
 
   <hr />
 
+  <label>
+    <span>This device</span>
+    <input class="field" bind:value={device} onblur={saveDevice} onkeydown={(e) => e.key === 'Enter' && (e.preventDefault(), e.currentTarget.blur())} />
+    <small class="muted">Shown on groups you save here, so you can tell devices apart. Leave empty to detect it again.</small>
+  </label>
+
+  <hr />
+
   <div class="head">
     <h2>Import / Export</h2>
     <p class="muted">OneTab-compatible: <code>url | title</code>, blank line between groups.</p>
@@ -76,6 +112,21 @@
       <a class="btn" href="list.html#export">Export URLs</a>
     {/if}
   </div>
+
+  <hr />
+
+  <div class="head">
+    <h2>Updates</h2>
+    <p class="muted">
+      Version {currentVersion()}. Updates install into the folder you loaded in chrome://extensions
+      {#if folderName}(<code>{folderName}</code>){:else}(not chosen yet; you'll be asked on the first update){/if}.
+    </p>
+  </div>
+  <div class="row">
+    <button type="button" class="btn" onclick={checkNow}>Check for updates</button>
+    <button type="button" class="btn ghost" onclick={changeFolder}>{folderName ? 'Change folder' : 'Choose folder'}</button>
+  </div>
+  {#if updMsg}<span class="msg" class:err={updMsg.startsWith('Error')}>{updMsg}</span>{/if}
 </form>
 
 <style>

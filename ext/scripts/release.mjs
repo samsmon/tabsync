@@ -45,6 +45,10 @@ run('git', ['commit', '-m', `Release ${tag}`, '--', 'package.json', 'package-loc
 run('git', ['tag', tag]);
 run('git', ['push', '--atomic', 'origin', 'HEAD', tag]);
 run('gh', ['release', 'create', tag, zip, '--title', `TabSync ${tag}`, ...(notesFile ? ['--notes-file', notesFile] : ['--generate-notes'])]);
+// The code repo is private, so installed extensions check and download from this public one
+// (keep in sync with RELEASES_REPO in src/lib/updater.js).
+const notes = notesFile ? ['--notes-file', notesFile] : ['--notes', `See what's new in TabSync ${tag}.`];
+run('gh', ['release', 'create', tag, zip, '--repo', 'samsmon/tabsync-releases', '--title', `TabSync ${tag}`, ...notes]);
 
 rmSync(zip);
 console.log(`\nReleased ${tag}`);

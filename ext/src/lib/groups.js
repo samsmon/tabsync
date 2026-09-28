@@ -35,7 +35,8 @@ function groupRecords(gid, meta, tabs, idFor = () => crypto.randomUUID()) {
 const newMeta = (createdAt = Date.now()) => ({ title: '', createdAt, locked: false, starred: false, pinned: false });
 
 // URLs already in the list are dropped silently, so the stored copy (and its title) wins.
-export async function createGroup(tabs) {
+// `meta` adds to the defaults, e.g. { title, device, chromeGroup: { color } }.
+export async function createGroup(tabs, meta = {}) {
   const seen = new Set();
   const fresh = [];
   for (const t of tabs) {
@@ -46,9 +47,36 @@ export async function createGroup(tabs) {
   tabs = fresh;
   if (!tabs.length) return null;
   const gid = `g:${crypto.randomUUID()}`;
-  await db.putMany(groupRecords(gid, newMeta(), tabs));
+  await db.putMany(groupRecords(gid, { ...newMeta(), ...meta }, tabs));
   changed();
   return gid;
+}
+
+// Quick archive: one fixed group (same id on every device, so it merges through sync) for
+// links worth keeping. Opening a link from it never removes it.
+export const ARCHIVE = 'g:archive';
+
+// Returns the archive meta record to write when it doesn't exist (or was emptied).
+async function archiveMeta() {
+  const g = await db.get(ARCHIVE);
+  return g && !g.deleted ? [] : [rec(ARCHIVE, { ...newMeta(), title: 'Quick archive', archive: true, locked: true })];
+}
+
+// Appends to the archive; URLs already in the archive are skipped. Returns how many were added.
+export async function addToArchive(tabs) {
+  const existing = (await tabsOf(ARCHIVE));
+  const seen = new Set(existing.map((r) => r.data.url));
+  let pos = Math.max(-1, ...existing.map((r) => r.data.pos));
+  const out = [];
+  for (const t of tabs) {
+    if (seen.has(t.url)) continue;
+    seen.add(t.url);
+    out.push(rec(`t:${crypto.randomUUID()}`, { groupId: ARCHIVE, url: t.url, title: t.title, pos: ++pos }));
+  }
+  if (!out.length) return 0;
+  await db.putMany([...(await archiveMeta()), ...out]);
+  changed();
+  return out.length;
 }
 
 // Bulk import keeps the source order: first group is treated as newest.
@@ -108,7 +136,7 @@ export async function moveTab(tabId, gid, beforeId = null) {
   const prev = siblings[i - 1]?.data.pos;
   const next = siblings[i]?.data.pos;
   const pos = prev == null ? (next == null ? 0 : next - 1) : next == null ? prev + 1 : (prev + next) / 2;
-  const out = [rec(tabId, { ...t.data, groupId: gid, pos })];
+  const out = [rec(tabId, { ...t.data, groupId: gid, pos }), ...(gid === ARCHIVE ? await archiveMeta() : [])];
   const from = t.data.groupId;
   if (from !== gid && !(await tabsOf(from)).some((r) => r.id !== tabId)) out.push(tomb(from));
   await db.putMany(out);

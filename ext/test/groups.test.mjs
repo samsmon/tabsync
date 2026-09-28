@@ -109,4 +109,36 @@ await G.importGroups([[{ url: 'https://1', title: '1' }], [{ url: 'https://2', t
 const titles = (await G.listGroups()).map((g) => g.data.tabs[0].title).filter((t) => t === '1' || t === '2');
 assert.deepEqual(titles.slice(0, 2), ['1', '2']);
 
+// createGroup keeps extra meta (Chrome tab group name/color, device)
+const cg = await G.createGroup([{ url: 'https://cg', title: 'cg' }], { title: 'Work', chromeGroup: { color: 'blue' }, device: 'Edge on Windows' });
+const cgData = (await G.listGroups()).find((g) => g.id === cg).data;
+assert.equal(cgData.title, 'Work');
+assert.deepEqual(cgData.chromeGroup, { color: 'blue' });
+assert.equal(cgData.device, 'Edge on Windows');
+
+// quick archive: fixed id, appends in order, skips URLs already archived (even if listed elsewhere it's still added)
+assert.equal(await G.addToArchive([{ url: 'https://arch1', title: 'a1' }, { url: 'https://cg', title: 'dup of a group tab' }]), 2);
+assert.equal(await G.addToArchive([{ url: 'https://arch1', title: 'again' }, { url: 'https://arch2', title: 'a2' }]), 1);
+let arch = (await G.listGroups()).find((g) => g.id === G.ARCHIVE).data;
+assert.equal(arch.archive, true);
+assert.deepEqual(arch.tabs.map((t) => t.title), ['a1', 'dup of a group tab', 'a2']);
+// emptying the archive tombstones it; adding again brings it back
+for (const t of arch.tabs) await G.removeTab(t.id);
+assert.ok((await db.get(G.ARCHIVE)).deleted);
+assert.equal(await G.addToArchive([{ url: 'https://arch3', title: 'a3' }]), 1);
+arch = (await G.listGroups()).find((g) => g.id === G.ARCHIVE).data;
+assert.deepEqual(arch.tabs.map((t) => t.title), ['a3']);
+// dragging a tab into the archive works even after it was emptied
+for (const t of arch.tabs) await G.removeTab(t.id);
+await G.moveTab((await G.listGroups()).find((g) => g.id === cg).data.tabs[0].id, G.ARCHIVE);
+assert.deepEqual((await G.listGroups()).find((g) => g.id === G.ARCHIVE)?.data.tabs.map((t) => t.url), ['https://cg']);
+
+// updater: version compare
+const { isNewer } = await import('../src/lib/updater.js');
+assert.ok(isNewer('0.3.2', '0.3.1'));
+assert.ok(isNewer('v0.10.0', '0.9.9'), 'numeric, not lexical; tolerates a v prefix');
+assert.ok(isNewer('1.0', '0.9.9'));
+assert.ok(!isNewer('0.3.1', '0.3.1'));
+assert.ok(!isNewer('0.3.0', '0.3.1'));
+
 console.log('all tests passed');

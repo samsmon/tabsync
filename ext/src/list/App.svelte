@@ -2,12 +2,13 @@
   import { onMount } from 'svelte';
   import { slide, fly } from 'svelte/transition';
   import { flip } from 'svelte/animate';
-  import { listGroups, updateGroup, deleteGroup, importGroups, removeTab, undo, moveTab, onChanged } from '../lib/groups.js';
+  import { listGroups, updateGroup, deleteGroup, importGroups, removeTab, undo, moveTab, onChanged, ARCHIVE } from '../lib/groups.js';
   import { parseOneTab, toOneTab } from '../lib/onetab.js';
   import { sync } from '../lib/sync.js';
   import Options from '../options/Options.svelte';
   import Icon from '../lib/Icon.svelte';
   import { getTheme, setTheme, THEMES } from '../lib/theme.js';
+  import { installUpdate, getFolder, currentVersion } from '../lib/updater.js';
 
   // Tabs/groups slide out when restored or removed and glide when reordered.
   // Off for the first render, so the initial list doesn't slide in card by card.
@@ -30,6 +31,10 @@
       .filter((g) => g.data.tabs.length);
   });
   const total = $derived(groups.reduce((n, g) => n + g.data.tabs.length, 0));
+  // The quick archive lives in the sidebar, not the main list.
+  const listed = $derived(filtered.filter((g) => g.id !== ARCHIVE));
+  const archived = $derived(filtered.find((g) => g.id === ARCHIVE));
+  const archiveCount = $derived(groups.find((g) => g.id === ARCHIVE)?.data.tabs.length ?? 0);
 
   async function reload() { groups = await listGroups(); }
 
@@ -69,6 +74,25 @@
   // Undo: every removal from the list returns a snapshot; removals made while the toast
   // is still up are merged, so one Undo brings all of them back.
   // raw: a deep $state proxy can't be structured-cloned into IndexedDB by undo()
+  // Self-update: the worker checks the releases repo; the banner installs with one click.
+  let update = $state(null); // { version, url, notes, page } when a newer release exists
+  let hasFolder = $state(false);
+  let updStep = $state('');
+  let updError = $state('');
+  let updatedNotice = $state('');
+
+  async function runUpdate() {
+    updError = '';
+    try {
+      await installUpdate(update, (s) => (updStep = s));
+    } catch (e) {
+      updStep = '';
+      // closing the folder picker is not an error worth showing
+      if (e.name !== 'AbortError') updError = e.message;
+    }
+    hasFolder = !!(await getFolder());
+  }
+
   let toast = $state.raw(null); // { verb, text, count, snap }
   let toastTimer;
   function offerUndo(verb, snap, count) {
@@ -98,8 +122,19 @@
       if (location.hash === '#import') openImport();
       if (location.hash === '#export') openExport();
     });
-    chrome.storage.local.get('syncStatus').then((s) => (syncInfo = s.syncStatus ?? null));
-    const onStore = (c) => c.syncStatus && (syncInfo = c.syncStatus.newValue ?? null);
+    chrome.storage.local.get(['syncStatus', 'update', 'updatedFrom']).then((s) => {
+      syncInfo = s.syncStatus ?? null;
+      update = s.update?.version ? s.update : null;
+      if (s.updatedFrom) {
+        updatedNotice = `Updated to v${currentVersion()} (from v${s.updatedFrom})`;
+        chrome.storage.local.remove('updatedFrom');
+      }
+    });
+    getFolder().then((d) => (hasFolder = !!d));
+    const onStore = (c) => {
+      if (c.syncStatus) syncInfo = c.syncStatus.newValue ?? null;
+      if (c.update) update = c.update.newValue?.version ? c.update.newValue : null;
+    };
     chrome.storage.onChanged.addListener(onStore);
     const tick = setInterval(() => (clock = Date.now()), 30_000);
     doSync();
@@ -117,7 +152,8 @@
 
   // Restored tabs open in the background of this window, so you stay here.
   // Holding Ctrl/Cmd keeps them in the list.
-  const keepOnRestore = (g, e) => g.data.locked || e.ctrlKey || e.metaKey;
+  // The quick archive always keeps its links, whatever its stored `locked` flag says.
+  const keepOnRestore = (g, e) => g.id === ARCHIVE || g.data.locked || e.ctrlKey || e.metaKey;
 
   async function openTab(g, t, e) {
     e.preventDefault();
@@ -125,13 +161,22 @@
     if (!keepOnRestore(g, e)) offerUndo('Restored', await removeTab(t.id), 1);
   }
 
+  // Groups that came from a Chrome tab group are restored as one again (same name and color).
+  async function regroup(g, tabIds, windowId) {
+    if (!g.data.chromeGroup || !tabIds.length) return;
+    const id = await chrome.tabs.group({ tabIds, createProperties: windowId ? { windowId } : undefined });
+    await chrome.tabGroups.update(id, { title: g.data.title, color: g.data.chromeGroup.color });
+  }
+
   async function restoreAll(g, e) {
-    for (const t of g.data.tabs) chrome.tabs.create({ url: t.url, active: false });
+    const tabs = await Promise.all(g.data.tabs.map((t) => chrome.tabs.create({ url: t.url, active: false })));
+    await regroup(g, tabs.map((t) => t.id));
     if (!keepOnRestore(g, e)) offerUndo('Restored', await deleteGroup(g.id), g.data.tabs.length);
   }
 
   async function restoreWindow(g, e) {
-    await chrome.windows.create({ url: g.data.tabs.map((t) => t.url) });
+    const win = await chrome.windows.create({ url: g.data.tabs.map((t) => t.url) });
+    await regroup(g, win.tabs.map((t) => t.id), win.id);
     if (!keepOnRestore(g, e)) offerUndo('Restored', await deleteGroup(g.id), g.data.tabs.length);
   }
 
@@ -206,10 +251,10 @@
   function saveCollapsed() {
     try { localStorage.setItem('collapsed', JSON.stringify([...collapsed])); } catch {}
   }
-  const allCollapsed = $derived(groups.length > 0 && groups.every((g) => collapsed.has(g.id)));
+  const allCollapsed = $derived(listed.length > 0 && listed.every((g) => collapsed.has(g.id)));
   function toggleAll() {
     // rebuilt from current groups, which also drops ids of groups that no longer exist
-    collapsed = new Set(allCollapsed ? [] : groups.map((g) => g.id));
+    collapsed = new Set(allCollapsed ? [] : listed.map((g) => g.id));
     saveCollapsed();
   }
 
@@ -239,6 +284,10 @@
     settings.close();
     kind === 'import' ? openImport() : openExport();
   }
+
+  // Chrome's tab group palette, for the dot on groups that came from a tab group.
+  const CHROME_COLORS = { grey: '#5f6368', blue: '#1a73e8', red: '#d93025', yellow: '#f9ab00', green: '#188038',
+    pink: '#d01884', purple: '#9334e6', cyan: '#007b83', orange: '#fa903e' };
 
   const favicon = (url) => `/_favicon/?pageUrl=${encodeURIComponent(url)}&size=16`;
   const fmt = (ms) => new Date(ms).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -280,6 +329,25 @@
     </div>
   </div>
   {#if status}<div class="status">{status}</div>{/if}
+  {#if update || updatedNotice}
+    <div class="notice" transition:slide={motion}>
+      {#if update}
+        <Icon name="download" size={15} />
+        <span class="grow">
+          <strong>TabSync v{update.version}</strong> is available <span class="muted">(you have v{currentVersion()})</span>
+          {#if updError}<span class="err">{updError}</span>
+          {:else if updStep}<span class="muted">{updStep}</span>
+          {:else if !hasFolder}<span class="muted">First update: pick the folder you loaded in chrome://extensions (it has manifest.json).</span>{/if}
+        </span>
+        <a class="btn ghost" href={update.page} target="_blank" rel="noreferrer">What's new</a>
+        <button class="btn primary" onclick={runUpdate} disabled={!!updStep}>{updStep ? 'Updating…' : 'Update'}</button>
+      {:else}
+        <Icon name="check" size={15} />
+        <span class="grow">{updatedNotice}</span>
+        <button class="icon-btn sm" title="Dismiss" onclick={() => (updatedNotice = '')}><Icon name="x" size={14} /></button>
+      {/if}
+    </div>
+  {/if}
 </header>
 
 <dialog bind:this={settings} onclick={(e) => e.target === settings && settings.close()}>
@@ -312,13 +380,15 @@
     </div>
   {/if}
 
+  <div class="layout">
   <main>
-    {#each filtered.slice(0, shown) as g (g.id)}
+    {#each listed.slice(0, shown) as g (g.id)}
       <section class="card" class:starred={g.data.starred} class:pinned={g.data.pinned} out:slide={motion} animate:flip={motion} role="group"
         aria-label={g.data.title || `${g.data.tabs.length} tabs`} class:drop-end={drop?.gid === g.id && drop.before === null}
         ondragover={(e) => dragOver(g.id, null, e)} ondrop={dropTab}>
         <div class="ghead">
           <div class="gtitle">
+            {#if g.data.chromeGroup}<span class="cg" style:--cg={CHROME_COLORS[g.data.chromeGroup.color]} title="From a Chrome tab group; restores as one"></span>{/if}
             <button class="icon-btn sm" title={collapsed.has(g.id) ? 'Expand' : 'Minimize'} aria-expanded={!collapsed.has(g.id)}
               onclick={() => toggle(g)}><Icon name={collapsed.has(g.id) ? 'chevronRight' : 'chevronDown'} /></button>
             {#if editing === g.id}
@@ -330,6 +400,7 @@
             <span class="meta">
               {#if g.data.title || collapsed.has(g.id)}<span class="pill">{g.data.tabs.length}</span>{/if}
               {fmt(g.data.createdAt)}
+              {#if g.data.device}<span class="device" title="Saved on this device"><Icon name="monitor" size={12} />{g.data.device}</span>{/if}
               {#if g.data.pinned}<span class="pill lock"><Icon name="pin" size={11} />Pinned</span>{/if}
               {#if g.data.locked}<span class="pill lock"><Icon name="lock" size={11} />Locked</span>{/if}
             </span>
@@ -374,12 +445,43 @@
       </section>
     {:else}
       <div class="empty card">
-        <p><strong>No saved tabs yet</strong></p>
-        <p class="muted">Click the TabSync toolbar icon to send your open tabs here.</p>
+        {#if q}
+          <p class="muted">No groups match "{q}".</p>
+        {:else}
+          <p><strong>No saved tabs yet</strong></p>
+          <p class="muted">Click the TabSync toolbar icon to send your open tabs here.</p>
+        {/if}
       </div>
     {/each}
     <div bind:this={sentinel}></div>
   </main>
+
+  <aside class="card archive" class:drop-end={drop?.gid === ARCHIVE && drop.before === null}
+    ondragover={(e) => dragOver(ARCHIVE, null, e)} ondrop={dropTab} aria-label="Quick archive">
+    <div class="ahead">
+      <h2>Quick archive</h2>
+      {#if archiveCount}<span class="pill">{archiveCount}</span>{/if}
+    </div>
+    {#if archived?.data.tabs.length}
+      <ul>
+        {#each archived.data.tabs as t (t.id)}
+          <li transition:slide={motion} animate:flip={motion} draggable="true" class:dragging={dragId === t.id}
+            class:drop-before={drop?.before === t.id}
+            ondragstart={(e) => dragStart(t, e)} ondragend={dragEnd} ondragover={(e) => dragOver(ARCHIVE, t.id, e)}>
+            <img src={favicon(t.url)} alt="" width="16" height="16" loading="lazy" draggable="false" />
+            <a href={t.url} draggable="false" title={t.url} onclick={(e) => openTab(archived, t, e)}>
+              <span class="atitle">{t.title}</span>
+              <span class="host">{host(t.url)}</span>
+            </a>
+            <button class="icon-btn sm danger remove" title="Remove from archive" onclick={() => removeOne(t)}><Icon name="x" size={14} /></button>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="muted hint">{q ? 'No matches.' : 'Right-click any link and choose "Send link to Quick archive", or drag a tab here. Links stay here after you open them.'}</p>
+    {/if}
+  </aside>
+  </div>
 </div>
 
 {#if toast}
@@ -398,7 +500,7 @@
     backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--border);
   }
-  .bar, .page { width: 100%; max-width: 1040px; margin: 0 auto; padding-inline: 20px; }
+  .bar, .page { width: 100%; max-width: 1360px; margin: 0 auto; padding-inline: 20px; }
   .bar { display: flex; align-items: center; gap: 16px; height: 60px; }
   .brand { display: flex; align-items: center; gap: 10px; }
   h1 { font-size: 16px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
@@ -410,7 +512,15 @@
   .search:focus-within { border-color: var(--muted); box-shadow: 0 0 0 3px var(--surface-2); }
   .search input { flex: 1; border: 0; outline: 0; background: none; color: var(--text); height: 100%; min-width: 0; }
   .actions { display: flex; align-items: center; gap: 2px; }
-  .status { max-width: 1040px; margin: -6px auto 0; padding: 0 20px 8px; font-size: 12px; color: var(--muted); }
+  .status { max-width: 1360px; margin: -6px auto 0; padding: 0 20px 8px; font-size: 12px; color: var(--muted); }
+  .notice {
+    display: flex; align-items: center; gap: 10px; max-width: 1320px; margin: 0 auto 10px; padding: 8px 8px 8px 14px;
+    border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); font-size: 13px;
+  }
+  .notice .grow { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+  .notice .err { color: var(--danger); }
+  .notice a.btn { text-decoration: none; }
+  @media (max-width: 1360px) { .notice { margin-inline: 20px; } }
 
   .sync { color: var(--muted); font-weight: 500; }
   .sync .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
@@ -422,6 +532,24 @@
 
   .page { padding-top: 20px; padding-bottom: 60px; }
   /* minmax(0, 1fr): without it a long nowrap title stretches the grid column past the window */
+  /* list + quick archive sidebar; the sidebar moves above the list on narrow windows */
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; align-items: start; }
+  .archive { position: sticky; top: 80px; max-height: calc(100vh - 100px); overflow-y: auto; padding: 12px 8px 8px; }
+  .ahead { display: flex; align-items: center; gap: 8px; padding: 0 6px 8px; }
+  .ahead h2 { font-size: 14px; margin: 0; }
+  .archive li { height: auto; padding: 5px 4px; align-items: flex-start; }
+  .archive li img { margin-top: 2px; }
+  .archive li a { display: grid; gap: 1px; white-space: normal; }
+  .archive .atitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .archive .host { max-width: none; }
+  .archive .hint { margin: 0; padding: 4px 6px 8px; font-size: 13px; line-height: 1.5; }
+  aside.drop-end { outline: 2px dashed var(--accent); outline-offset: -2px; }
+  .cg { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--cg); }
+  .device { display: inline-flex; align-items: center; gap: 4px; }
+  @media (max-width: 1100px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    .archive { position: static; max-height: 320px; order: -1; }
+  }
   main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
   section { min-width: 0; padding: 10px 10px 8px; content-visibility: auto; contain-intrinsic-size: auto 220px; }
