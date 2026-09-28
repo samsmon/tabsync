@@ -65,6 +65,12 @@ await db.put({ ...(await db.get(q.id)), ts: Date.now() + 1e6, dirty: false,
 const merged = (await G.listGroups())[0].data.tabs;
 assert.deepEqual(merged.map((t) => t.title), ['Q (edited remotely)'], 'both edits survive');
 
+// storing a URL that's already listed is silently dropped, keeping the existing title
+assert.equal(await G.createGroup([{ url: 'https://q', title: 'new title' }]), null);
+const g3 = await G.createGroup([{ url: 'https://q', title: 'dup' }, { url: 'https://r', title: 'R' }, { url: 'https://r', title: 'R2' }]);
+assert.deepEqual((await G.listGroups()).find((g) => g.id === g3).data.tabs.map((t) => t.title), ['R']);
+assert.ok((await G.listGroups()).some((g) => g.data.tabs.some((t) => t.title === 'Q (edited remotely)')));
+
 // import keeps order and ids are per-tab
 await G.importGroups([[{ url: 'https://1', title: '1' }], [{ url: 'https://2', title: '2' }]]);
 const titles = (await G.listGroups()).map((g) => g.data.tabs[0].title).filter((t) => t === '1' || t === '2');

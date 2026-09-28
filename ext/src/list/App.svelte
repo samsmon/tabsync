@@ -32,7 +32,11 @@
   }
 
   onMount(() => {
-    reload();
+    reload().then(() => {
+      // Settings links here as list.html#import / #export
+      if (location.hash === '#import') openImport();
+      if (location.hash === '#export') openExport();
+    });
     doSync();
     const onMsg = (m) => m?.type === 'changed' && reload();
     chrome.runtime.onMessage.addListener(onMsg);
@@ -42,26 +46,41 @@
     return () => { chrome.runtime.onMessage.removeListener(onMsg); io.disconnect(); };
   });
 
+  // Restored tabs open in the background of this window, so you stay here.
+  // Holding Ctrl/Cmd keeps them in the list.
+  const keepOnRestore = (g, e) => g.data.locked || e.ctrlKey || e.metaKey;
+
   function openTab(g, t, e) {
     e.preventDefault();
     chrome.tabs.create({ url: t.url, active: false });
-    if (!g.data.locked) removeTab(t.id);
+    if (!keepOnRestore(g, e)) removeTab(t.id);
   }
 
-  async function restoreAll(g) {
+  function restoreAll(g, e) {
     for (const t of g.data.tabs) chrome.tabs.create({ url: t.url, active: false });
-    if (!g.data.locked) deleteGroup(g.id);
+    if (!keepOnRestore(g, e)) deleteGroup(g.id);
   }
 
-  async function restoreWindow(g) {
+  async function restoreWindow(g, e) {
     await chrome.windows.create({ url: g.data.tabs.map((t) => t.url) });
-    if (!g.data.locked) deleteGroup(g.id);
+    if (!keepOnRestore(g, e)) deleteGroup(g.id);
   }
 
-  function rename(g) {
-    const title = prompt('Name this group', g.data.title);
-    if (title !== null) updateGroup(g.id, { title });
+  let editing = $state(null); // group id whose title is being edited
+
+  function saveTitle(g, e) {
+    if (editing !== g.id) return;
+    editing = null;
+    const title = e.currentTarget.value.trim();
+    if (title !== g.data.title) updateGroup(g.id, { title });
   }
+
+  function titleKey(g, e) {
+    if (e.key === 'Enter') e.currentTarget.blur();
+    if (e.key === 'Escape') editing = null;
+  }
+
+  const focus = (el) => { el.focus(); el.select(); };
 
   function remove(g) {
     if (confirm(`Delete ${g.data.tabs.length} tabs?`)) deleteGroup(g.id);
@@ -135,11 +154,15 @@
   {#each filtered.slice(0, shown) as g (g.id)}
     <section>
       <div class="ghead">
-        <strong>{g.data.title || `${g.data.tabs.length} tabs`}</strong>
+        {#if editing === g.id}
+          <input class="title" value={g.data.title} placeholder="Name this group" use:focus
+            onblur={(e) => saveTitle(g, e)} onkeydown={(e) => titleKey(g, e)} />
+        {:else}
+          <button class="title" title="Click to rename" onclick={() => (editing = g.id)}>{g.data.title || `${g.data.tabs.length} tabs`}</button>
+        {/if}
         <span class="muted">{fmt(g.data.createdAt)}</span>
-        <button onclick={() => restoreAll(g)}>Restore all</button>
-        <button onclick={() => restoreWindow(g)}>In new window</button>
-        <button onclick={() => rename(g)}>Name</button>
+        <button onclick={(e) => restoreAll(g, e)} title="Hold Ctrl/Cmd to keep them in the list">Restore all</button>
+        <button onclick={(e) => restoreWindow(g, e)}>In new window</button>
         <button onclick={() => updateGroup(g.id, { locked: !g.data.locked })}>{g.data.locked ? 'Unlock' : 'Lock'}</button>
         <button onclick={() => updateGroup(g.id, { starred: !g.data.starred })}>{g.data.starred ? '★' : '☆'}</button>
         <button class="danger" onclick={() => remove(g)}>Delete</button>
@@ -169,7 +192,8 @@
   main { padding: 8px 16px 40px; max-width: 1000px; }
   section { padding: 12px 0; border-bottom: 1px solid #8883; content-visibility: auto; contain-intrinsic-size: auto 200px; }
   .ghead { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; }
-  .ghead strong { margin-right: 4px; }
+  button.title { border: 0; background: none; padding: 0; margin-right: 4px; font-size: 14px; font-weight: bold; color: inherit; }
+  input.title { flex: 0 1 260px; min-width: 120px; padding: 2px 6px; font: bold 14px system-ui, sans-serif; }
   ul { list-style: none; margin: 0; padding: 0; }
   li { display: flex; gap: 6px; align-items: center; padding: 2px 0; min-width: 0; }
   li a { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: LinkText; text-decoration: none; }

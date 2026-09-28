@@ -9,6 +9,7 @@ const keep = (t) => t.url && !t.url.startsWith(LIST_URL) && !t.pinned && !/^(chr
 async function sendTabs(tabs) {
   tabs = tabs.filter(keep);
   if (!tabs.length) return openList();
+  // duplicates are dropped from the list but their tabs still close
   await createGroup(tabs.map((t) => ({ url: t.url, title: t.title || t.url })));
   await openList();
   await chrome.tabs.remove(tabs.map((t) => t.id));
@@ -25,7 +26,11 @@ async function openList() {
   }
 }
 
-chrome.action.onClicked.addListener(async () => {
+// Multi-selected tabs win; otherwise the active tab's tab group; otherwise the whole window.
+chrome.action.onClicked.addListener(async (active) => {
+  const selected = await chrome.tabs.query({ currentWindow: true, highlighted: true });
+  if (selected.length > 1) return sendTabs(selected);
+  if (active.groupId > -1) return sendTabs(await chrome.tabs.query({ groupId: active.groupId }));
   sendTabs(await chrome.tabs.query({ currentWindow: true }));
 });
 
@@ -48,4 +53,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 });
 
 chrome.alarms.onAlarm.addListener((a) => a.name === 'sync' && sync().catch(console.warn));
-chrome.runtime.onStartup.addListener(() => sync().catch(console.warn));
+chrome.runtime.onStartup.addListener(() => {
+  openList();
+  sync().catch(console.warn);
+});

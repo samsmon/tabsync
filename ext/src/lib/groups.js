@@ -22,7 +22,11 @@ function groupRecords(gid, meta, tabs, idFor = () => crypto.randomUUID()) {
 
 const newMeta = (createdAt = Date.now()) => ({ title: '', createdAt, locked: false, starred: false });
 
+// URLs already in the list are dropped silently, so the stored copy (and its title) wins.
 export async function createGroup(tabs) {
+  const seen = new Set((await db.all()).filter((r) => !r.deleted && r.id.startsWith('t:')).map((r) => r.data.url));
+  tabs = tabs.filter((t) => !seen.has(t.url) && seen.add(t.url));
+  if (!tabs.length) return null;
   const gid = `g:${crypto.randomUUID()}`;
   await db.putMany(groupRecords(gid, newMeta(), tabs));
   changed();

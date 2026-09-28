@@ -42,6 +42,9 @@
   </p>
   <button disabled={busy}>Connect</button>
   {#if msg}<p>{msg}</p>{/if}
+  <h2>Import / Export</h2>
+  <p class="hint">OneTab-compatible (<code>url | title</code>, blank line between groups).</p>
+  <p><a href="list.html#import">Import URLs</a> · <a href="list.html#export">Export URLs</a></p>
 </form>
 
 <style>
