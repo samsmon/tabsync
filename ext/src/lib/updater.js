@@ -1,11 +1,11 @@
 // Self-update for the unpacked extension. Chrome can't update an unpacked extension, but a page
 // the user has granted a folder to (File System Access API) can overwrite that folder's files.
-// Flow: check the public releases repo -> download the zip -> unzip -> write into the extension
-// folder the user picked once -> chrome.runtime.reload().
+// Flow: check this (public) repo's GitHub Releases -> download the zip -> unzip -> write into the
+// extension folder the user picked once -> chrome.runtime.reload().
 import { unzipSync } from 'fflate';
 import { db } from './db.js';
 
-export const RELEASES_REPO = 'samsmon/tabsync-releases';
+export const RELEASES_REPO = 'samsmon/tabsync';
 const API = `https://api.github.com/repos/${RELEASES_REPO}/releases/latest`;
 
 export const currentVersion = () => chrome.runtime.getManifest().version;
