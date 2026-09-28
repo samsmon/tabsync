@@ -141,6 +141,17 @@
 
   const focus = (el) => { el.focus(); el.select(); };
 
+  // Copies the group's URLs one per line; Shift+click copies "url | title" (re-importable).
+  let copied = $state(null); // group id showing "Copied!"
+  let copiedTimer;
+  async function copyGroup(g, e) {
+    const text = e.shiftKey ? toOneTab([g]) : g.data.tabs.map((t) => t.url).join('\n') + '\n';
+    await navigator.clipboard.writeText(text);
+    clearTimeout(copiedTimer);
+    copied = g.id;
+    copiedTimer = setTimeout(() => (copied = null), 1500);
+  }
+
   // No confirm dialogs: every removal can be undone from the toast.
   async function remove(g) { offerUndo('Deleted', await deleteGroup(g.id), g.data.tabs.length); }
   async function removeOne(t) { offerUndo('Deleted', await removeTab(t.id), 1); }
@@ -280,6 +291,7 @@
         <span class="muted">{#if collapsed.has(g.id)}{g.data.tabs.length} tabs · {/if}{fmt(g.data.createdAt)}</span>
         <button onclick={(e) => restoreAll(g, e)} title="Hold Ctrl/Cmd to keep them in the list">Restore all</button>
         <button onclick={(e) => restoreWindow(g, e)}>In new window</button>
+        <button onclick={(e) => copyGroup(g, e)} title="Copy URLs (Shift: with titles, OneTab format)">{copied === g.id ? 'Copied!' : 'Copy'}</button>
         <button onclick={() => updateGroup(g.id, { locked: !g.data.locked })}>{g.data.locked ? 'Unlock' : 'Lock'}</button>
         <button onclick={() => updateGroup(g.id, { starred: !g.data.starred })}>{g.data.starred ? '★' : '☆'}</button>
         <button class="danger" onclick={() => remove(g)}>Delete</button>
