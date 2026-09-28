@@ -2,14 +2,15 @@
 // Usage: npm run release 0.3.0 [-- --notes-file notes.md]
 // Bumps versions, tests, builds, zips dist/, commits, tags, pushes and creates the GitHub Release via `gh`.
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync, readdirSync } from 'node:fs';
 
 const [version, ...rest] = process.argv.slice(2);
 const notesIdx = rest.indexOf('--notes-file');
 const notesFile = notesIdx > -1 ? rest[notesIdx + 1] : null;
 
 const die = (msg) => { console.error(`release: ${msg}`); process.exit(1); };
-const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: 'inherit', shell: process.platform === 'win32' && cmd !== 'tar', ...opts });
+// Only npm needs a shell on Windows (it's npm.cmd); a shell would split args like "Release v1.0.0".
+const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: 'inherit', shell: process.platform === 'win32' && cmd === 'npm', ...opts });
 const out = (cmd, args) => execFileSync(cmd, args, { encoding: 'utf8' }).trim();
 
 if (!/^\d+\.\d+\.\d+$/.test(version ?? '')) die('give a version like 0.3.0');
@@ -30,7 +31,7 @@ run('npm', ['run', 'build']);
 
 // Windows' built-in bsdtar writes zips with forward slashes; elsewhere use zip.
 rmSync(zip, { force: true });
-if (process.platform === 'win32') run(`${process.env.SystemRoot}\\System32\\tar.exe`, ['-a', '-c', '-f', `../${zip}`, '*'], { cwd: 'dist', shell: true });
+if (process.platform === 'win32') run(`${process.env.SystemRoot}\\System32\\tar.exe`, ['-a', '-c', '-f', `../${zip}`, ...readdirSync('dist')], { cwd: 'dist' });
 else run('zip', ['-qr', `../${zip}`, '.'], { cwd: 'dist' });
 
 run('git', ['commit', '-m', `Release ${tag}`, '--', 'package.json', 'package-lock.json', 'public/manifest.json']);
