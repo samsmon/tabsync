@@ -109,6 +109,9 @@ export async function installUpdate(update, onStep = () => {}) {
   if (manifest.version !== update.version) throw new Error('The downloaded zip is not the expected version.');
 
   onStep('Installing…');
+  // Only extension files change. chrome.storage (server, token, encryption key, device id) and
+  // IndexedDB (the tabs) are keyed to the extension id, which for an unpacked extension comes from
+  // its folder path, so reloading from the same folder keeps them. Never clear storage here.
   await writeFiles(dir, files);
   await chrome.storage.local.set({ update: { checkedAt: Date.now() }, updatedFrom: currentVersion() });
 

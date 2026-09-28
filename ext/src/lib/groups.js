@@ -20,8 +20,17 @@ export function onChanged(fn) {
   return () => { listeners.delete(fn); chrome.runtime.onMessage.removeListener(onMsg); };
 }
 
+// Only edits made in this context (not ones announced by other pages or a sync pull),
+// so the page can push its own changes without re-syncing after every pull.
+const localListeners = new Set();
+export function onLocalChange(fn) {
+  localListeners.add(fn);
+  return () => localListeners.delete(fn);
+}
+
 function changed() {
   for (const fn of listeners) fn();
+  for (const fn of localListeners) fn();
   chrome.runtime.sendMessage({ type: 'changed', local: true }).catch(() => {});
 }
 
@@ -50,6 +59,29 @@ export async function createGroup(tabs, meta = {}) {
   await db.putMany(groupRecords(gid, { ...newMeta(), ...meta }, tabs));
   changed();
   return gid;
+}
+
+// Device registry: every profile keeps a synced "d:<deviceId>" record { name, lastSeen }, so
+// devices are listed even when they have no groups. There is no uninstall event to hook, so
+// a device that stops checking in is dropped from the list after DEVICE_STALE_MS.
+export const DEVICE_STALE_MS = 14 * 24 * 3600e3;
+const HEARTBEAT_MS = 6 * 3600e3;
+
+// Writes this device's record when it's new, renamed, or last written HEARTBEAT_MS ago.
+export async function heartbeat({ deviceId, device }, now = Date.now()) {
+  const id = `d:${deviceId}`;
+  const cur = await db.get(id);
+  if (cur && !cur.deleted && cur.data.name === device && now - cur.data.lastSeen < HEARTBEAT_MS) return false;
+  await db.put(rec(id, { name: device, lastSeen: now }));
+  changed();
+  return true;
+}
+
+// [{ id, name, lastSeen }] for devices seen within DEVICE_STALE_MS
+export async function listDevices(now = Date.now()) {
+  return (await db.all())
+    .filter((r) => r.id.startsWith('d:') && !r.deleted && now - r.data.lastSeen < DEVICE_STALE_MS)
+    .map((r) => ({ id: r.id.slice(2), name: r.data.name, lastSeen: r.data.lastSeen }));
 }
 
 // Quick archive: one fixed group (same id on every device, so it merges through sync) for

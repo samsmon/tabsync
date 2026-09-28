@@ -139,6 +139,19 @@ for (const t of arch.tabs) await G.removeTab(t.id);
 await G.moveTab((await G.listGroups()).find((g) => g.id === cg).data.tabs[0].id, G.ARCHIVE);
 assert.deepEqual((await G.listGroups()).find((g) => g.id === G.ARCHIVE)?.data.tabs.map((t) => t.url), ['https://cg']);
 
+// device registry: heartbeat writes only when new, renamed or due; stale devices drop off
+const T = 1_000_000_000_000;
+assert.equal(await G.heartbeat({ deviceId: 'dev-a', device: 'Edge on Windows' }, T), true);
+assert.equal(await G.heartbeat({ deviceId: 'dev-a', device: 'Edge on Windows' }, T + 60e3), false, 'no write within the heartbeat window');
+assert.equal(await G.heartbeat({ deviceId: 'dev-a', device: 'Work laptop' }, T + 120e3), true, 'rename writes');
+assert.equal(await G.heartbeat({ deviceId: 'dev-a', device: 'Work laptop' }, T + 7 * 3600e3), true, 'due heartbeat writes');
+await G.heartbeat({ deviceId: 'dev-b', device: 'Chrome on macOS' }, T);
+let devs = await G.listDevices(T + 8 * 3600e3);
+assert.deepEqual(devs.map((d) => [d.id, d.name]).sort(), [['dev-a', 'Work laptop'], ['dev-b', 'Chrome on macOS']]);
+devs = await G.listDevices(T + G.DEVICE_STALE_MS + 1);
+assert.deepEqual(devs.map((d) => d.id), ['dev-a'], 'dev-b went quiet and drops off; dev-a checked in later');
+assert.ok(!(await G.listGroups()).some((g) => g.id.startsWith('d:')), 'device records are not groups');
+
 // updater: version compare
 const { isNewer } = await import('../src/lib/updater.js');
 assert.ok(isNewer('0.3.2', '0.3.1'));

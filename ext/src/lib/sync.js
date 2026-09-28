@@ -1,5 +1,6 @@
 import { db } from './db.js';
-import { migrateLegacy } from './groups.js';
+import { migrateLegacy, heartbeat } from './groups.js';
+import { deviceMeta } from './device.js';
 import { deriveKey, encrypt, decrypt, newSalt, makeVerifier, checkVerifier, exportKey, importKey } from './crypto.js';
 
 async function config() {
@@ -61,6 +62,7 @@ async function doSync() {
   if (!cfg) return { skipped: true };
 
   await migrateLegacy();
+  await heartbeat(await deviceMeta()); // keeps this device listed on the others
   let pushed = await push(cfg);
 
   // pull remote changes (last-writer-wins by ts)

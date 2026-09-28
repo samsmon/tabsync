@@ -60,7 +60,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   chrome.contextMenus.create({ id: 'send-others', title: 'Send all except this tab', contexts: ['page', 'action'] });
   chrome.contextMenus.create({ id: 'send-all-windows', title: 'Send tabs from all windows', contexts: ['action'] });
   chrome.contextMenus.create({ id: 'show', title: 'Show TabSync', contexts: ['page', 'action'] });
-  chrome.alarms.create('sync', { periodInMinutes: 1 });
+  chrome.alarms.create('sync', { periodInMinutes: 0.5 }); // Chrome's minimum
   chrome.alarms.create('update', { periodInMinutes: 360 });
   checkUpdate();
   // A self-update reloads the extension, which closes the list page; bring it back.

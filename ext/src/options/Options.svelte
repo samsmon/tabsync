@@ -2,7 +2,8 @@
   import { onMount } from 'svelte';
   import { setup } from '../lib/sync.js';
   import { checkForUpdate, pickFolder, getFolder, currentVersion } from '../lib/updater.js';
-  import { deviceName, setDeviceName } from '../lib/device.js';
+  import { deviceName, setDeviceName, deviceMeta } from '../lib/device.js';
+  import { heartbeat } from '../lib/groups.js';
 
   // Inside the list page's modal, import/export open in place instead of navigating.
   let { onio } = $props();
@@ -12,6 +13,7 @@
   async function saveDevice() {
     await setDeviceName(device);
     device = await deviceName(); // empty resets to the detected name
+    await heartbeat(await deviceMeta()); // new name shows on other devices after the next sync
   }
 
   let folderName = $state('');

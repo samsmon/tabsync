@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { slide, fly } from 'svelte/transition';
   import { flip } from 'svelte/animate';
-  import { listGroups, updateGroup, deleteGroup, importGroups, removeTab, undo, moveTab, onChanged, ARCHIVE } from '../lib/groups.js';
+  import { listGroups, updateGroup, deleteGroup, importGroups, removeTab, undo, moveTab, onChanged, onLocalChange, ARCHIVE, listDevices } from '../lib/groups.js';
   import { parseOneTab, toOneTab } from '../lib/onetab.js';
   import { sync } from '../lib/sync.js';
   import Options from '../options/Options.svelte';
@@ -43,17 +43,19 @@
     try { localStorage.setItem('deviceFilter', v); } catch {}
   }
   // [{ id, name, count }] for every device that has groups; its newest group's name wins
+  // Devices come from the synced registry (every profile checks in on sync), so a device is
+  // listed even with no groups, and one that stopped checking in drops off by itself.
+  let registry = $state([]); // [{ id, name, lastSeen }]
   const devices = $derived.by(() => {
-    const m = new Map();
-    for (const g of groups) {
-      const id = g.data.deviceId;
-      if (!id || g.id === ARCHIVE) continue;
-      const d = m.get(id) ?? { id, name: g.data.device, count: 0, at: 0 };
-      d.count++;
-      if (g.data.createdAt > d.at) Object.assign(d, { name: g.data.device, at: g.data.createdAt });
-      m.set(id, d);
-    }
-    return [...m.values()].sort((a, b) => (b.id === myId) - (a.id === myId) || a.name.localeCompare(b.name));
+    const counts = new Map();
+    for (const g of groups) if (g.id !== ARCHIVE && g.data.deviceId) counts.set(g.data.deviceId, (counts.get(g.data.deviceId) ?? 0) + 1);
+    const list = registry.map((d) => ({ ...d, count: counts.get(d.id) ?? 0 }));
+    if (myId && !list.some((d) => d.id === myId)) list.push({ id: myId, name: '', count: counts.get(myId) ?? 0 });
+    return list.sort((a, b) => (b.id === myId) - (a.id === myId) || a.name.localeCompare(b.name));
+  });
+  // a device picked in the filter that has since dropped off falls back to this device
+  $effect(() => {
+    if (registry.length && devFilter !== 'this' && devFilter !== 'all' && !registry.some((d) => d.id === devFilter)) setDevFilter('this');
   });
   // two profiles with the same detected name get a short id suffix
   const devLabel = (d) => devices.some((o) => o !== d && o.name === d.name) ? `${d.name} (${d.id.slice(0, 4)})` : d.name;
@@ -63,7 +65,7 @@
   const archived = $derived(filtered.find((g) => g.id === ARCHIVE));
   const archiveCount = $derived(groups.find((g) => g.id === ARCHIVE)?.data.tabs.length ?? 0);
 
-  async function reload() { groups = await listGroups(); }
+  async function reload() { [groups, registry] = await Promise.all([listGroups(), listDevices()]); }
 
   // Last sync outcome is written by sync() wherever it ran (here or the background alarm).
   let syncInfo = $state(null); // { at, ok, error? }
@@ -75,6 +77,27 @@
     syncing = true;
     try { syncOff = !!(await sync())?.skipped; } catch {} finally { syncing = false; }
     reload();
+  }
+
+  // Auto sync: push shortly after local edits, pull every 15s while the page is visible and
+  // right away when it becomes visible again. These run quietly (no "Syncing…" flicker);
+  // failures still reach the indicator through syncStatus.
+  const AUTO_EVERY = 15_000;
+  const PUSH_DELAY = 1500;
+  let pushTimer;
+  async function quietSync() {
+    // no syncOff guard: a server connected in Settings must start syncing without a reload,
+    // and sync() returns right away when none is configured
+    if (syncing) return;
+    try {
+      const r = await sync();
+      syncOff = !!r?.skipped;
+      if (r?.pulled) reload();
+    } catch {}
+  }
+  function schedulePush() {
+    clearTimeout(pushTimer);
+    pushTimer = setTimeout(quietSync, PUSH_DELAY);
   }
 
   function ago(ms) {
@@ -166,11 +189,21 @@
     const tick = setInterval(() => (clock = Date.now()), 30_000);
     doSync();
     const offChanged = onChanged(reload);
+    const offLocal = onLocalChange(schedulePush);
+    const poll = setInterval(() => document.visibilityState === 'visible' && quietSync(), AUTO_EVERY);
+    const onVisible = () => document.visibilityState === 'visible' && quietSync();
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
     // render groups progressively instead of all at once
     const io = new IntersectionObserver(([e]) => e.isIntersecting && (shown += PAGE));
     io.observe(sentinel);
     return () => {
       offChanged();
+      offLocal();
+      clearInterval(poll);
+      clearTimeout(pushTimer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
       chrome.storage.onChanged.removeListener(onStore);
       clearInterval(tick);
       io.disconnect();
@@ -487,7 +520,7 @@
   </main>
 
   <div class="side">
-  {#if devices.some((d) => d.id !== myId)}
+  {#if myId}
     <nav class="card devices" aria-label="Filter by device">
       <div class="ahead"><h2>Devices</h2></div>
       <button class="dev" class:on={devFilter === 'this'} onclick={() => setDevFilter('this')}>
