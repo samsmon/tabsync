@@ -1,0 +1,14 @@
+services:
+  tabsync:
+    build: ./server
+    restart: unless-stopped
+    environment:
+      TABSYNC_TOKEN: ${TABSYNC_TOKEN:?set TABSYNC_TOKEN in .env}
+    volumes:
+      - tabsync-data:/data
+    ports:
+      - "8080:8080"
+    mem_limit: 64m
+
+volumes:
+  tabsync-data:
